@@ -140,18 +140,40 @@ const baseMap = getBaseKitMap(calculatedKitData);
 const forecastMap = generateForecast("2025-05", 120,baseMap);
 
 // Plug in your generated updatedDrugData (with replenishment dates)
-applyDrugDataRevenue(forecastMap, updatedDrugData);
-console.log(forecastMap)
+let drugDataMap = applyDrugDataRevenue(forecastMap, updatedDrugData);
+
 //Get Autor replenish sheet data
 let rangeAutoReplenishMedGroups =  wsAutoReplenishMedGroups.getRange("D2:F22011")
 rangeAutoReplenishMedGroups.load("values")
 await context.sync()
 // Auto-replenish items (only applied once)
 console.log(rangeAutoReplenishMedGroups.values.splice(0,10))
-applyAutoReplenishOnce(forecastMap,rangeAutoReplenishMedGroups.values);
+let autoReplenish = applyAutoReplenishOnce(forecastMap,rangeAutoReplenishMedGroups.values);
+console.log(drugDataMap,baseMap,autoReplenish);
+// 1. Combine all unique months
 
 // --- Step 6: Final Output
-const finalRevenueForecast = Array.from(forecastMap.entries()).map(([month, revenue]) => [month, revenue]);
+// const finalRevenueForecast = Array.from(forecastMap.entries()).map(([month, revenue]) => [month, revenue]);
+
+const allMonths = new Set([
+  ...drugDataMap.keys(),
+  ...autoReplenish.keys(),
+  ...baseMap.keys(),
+  ...forecastMap.keys()
+]);
+
+// 2. Generate final forecast array
+const finalRevenueForecast= [];
+
+for (const month of [...allMonths].sort()) {
+  const newkit = baseMap.get(month) || 0;
+  const auto = autoReplenish.get(month) || 0;
+  const drugData = drugDataMap.get(month) || 0;
+  const totalRevenue = newkit + auto + drugData;
+
+  finalRevenueForecast.push([month, totalRevenue, newkit, auto, drugData]);
+}
+
 wsRevenuePredictions.getRangeByIndexes(1,0,finalRevenueForecast.length,finalRevenueForecast[0].length).values = finalRevenueForecast;
 
 console.table(finalRevenueForecast);
@@ -219,19 +241,24 @@ function generateForecast(start = "2023-06", months = 120, baseMap = new Map()) 
 
 // --- Step 3: Add drugData replenishment costs
 function applyDrugDataRevenue(forecastMap, drugData) {
+  let drugDataMap = new Map();
   for (const row of drugData) {
     const total = parseFloat(row[4]);
-    const replenishmentDates = row.slice(6); // dynamically added dates
+    const replenishmentDates = row.slice(6);
+     // dynamically added dates
     replenishmentDates.forEach(date => {
       if (forecastMap.has(date)) {
         forecastMap.set(date, forecastMap.get(date) + total);
+        drugDataMap.set(date,drugDataMap.get(date)!=undefined? drugDataMap.get(date)+total:total)
       }
     });
   }
+  return drugDataMap
 }
 
 // --- Step 4: Add Auto Replenish (just once, at expiration date)
 function applyAutoReplenishOnce(forecastMap, autoData) {
+  let autoReplenish = new Map();
   autoData.forEach(row => {
     const [expDate, priceStr, status] = row;
 
@@ -245,8 +272,10 @@ function applyAutoReplenishOnce(forecastMap, autoData) {
     if (forecastMap.has(key)) {
       if(!isNaN(price))
       forecastMap.set(key, forecastMap.get(key) + price);
+      autoReplenish.set(key,autoReplenish.get(key) !== undefined? autoReplenish.get(key) + price: price)
     }
   });
+  return autoReplenish;
 }
 
 // // --- Step 5: Execute everything

@@ -10,7 +10,7 @@
   <HighResolutionIconUrl DefaultValue="https://localhost:3000/assets/icon(2).png"/>
   <SupportUrl DefaultValue="https://www.upwork.com/freelancers/~018445549db3360bcd?mp_source=share"/>
   <AppDomains>
-    <AppDomain>https://www.contoso.com</AppDomain>
+    <AppDomain>https://ategutwo.github.io/officejsProtectItFirst/</AppDomain>
   </AppDomains>
   <Hosts>
     <Host Name="Workbook"/>
