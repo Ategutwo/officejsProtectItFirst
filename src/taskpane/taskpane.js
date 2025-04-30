@@ -252,17 +252,7 @@ export async function run() {
         }
       }
 
-      const BATCH_SIZE = 500;
 
-for (let startRow = 0; startRow < outputAutoReplenishAndForecast.length; startRow += BATCH_SIZE) {
-    const chunk = outputAutoReplenishAndForecast.slice(startRow, startRow + BATCH_SIZE);
-    
-    wsAutoReplenishMedGroupsAndPredictions
-        .getRangeByIndexes(startRow, 0, chunk.length, chunk[0].length)
-        .values = chunk;
-
-    await context.sync();
-}
       // Auto-replenish items (only applied once)
       let autoReplenish = applyAutoReplenishOnce(forecastMap, outputAutoReplenishAndForecast);
       console.log(drugDataMap, baseMap, autoReplenish);
@@ -296,8 +286,21 @@ for (let startRow = 0; startRow < outputAutoReplenishAndForecast.length; startRo
         finalRevenueForecast.length,
         finalRevenueForecast[0].length
       ).values = finalRevenueForecast;
-
+      await context.sync();
       console.table(finalRevenueForecast);
+      
+      const BATCH_SIZE = 10000;
+
+      for (let startRow = 0; startRow < outputAutoReplenishAndForecast.length; startRow += BATCH_SIZE) {
+          const chunk = outputAutoReplenishAndForecast.slice(startRow, startRow + BATCH_SIZE);
+          
+          wsAutoReplenishMedGroupsAndPredictions
+              .getRangeByIndexes(startRow, 0, chunk.length, chunk[0].length)
+              .values = chunk;
+      
+          await context.sync();
+      }
+      
       return context.sync();
     });
   } catch (error) {
