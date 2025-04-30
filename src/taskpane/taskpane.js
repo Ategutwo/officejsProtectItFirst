@@ -181,7 +181,7 @@ export async function run() {
 
       // --- Step 5: Execute everything
       const baseMap = getBaseKitMap(calculatedKitData);
-      const forecastMap = generateForecast("2025-05", 120, baseMap);
+      const forecastMap = generateForecast("2025-05", 300, baseMap);
 
       // Plug in your generated updatedDrugData (with replenishment dates)
       let drugDataMap = applyDrugDataRevenue(forecastMap, updatedDrugData);
@@ -252,13 +252,17 @@ export async function run() {
         }
       }
 
-      wsAutoReplenishMedGroupsAndPredictions.getRangeByIndexes(
-        0,
-        0,
-        outputAutoReplenishAndForecast.length,
-        outputAutoReplenishAndForecast[0].length
-      ).values = outputAutoReplenishAndForecast;
-      await context.sync();
+      const BATCH_SIZE = 500;
+
+for (let startRow = 0; startRow < outputAutoReplenishAndForecast.length; startRow += BATCH_SIZE) {
+    const chunk = outputAutoReplenishAndForecast.slice(startRow, startRow + BATCH_SIZE);
+    
+    wsAutoReplenishMedGroupsAndPredictions
+        .getRangeByIndexes(startRow, 0, chunk.length, chunk[0].length)
+        .values = chunk;
+
+    await context.sync();
+}
       // Auto-replenish items (only applied once)
       let autoReplenish = applyAutoReplenishOnce(forecastMap, outputAutoReplenishAndForecast);
       console.log(drugDataMap, baseMap, autoReplenish);
