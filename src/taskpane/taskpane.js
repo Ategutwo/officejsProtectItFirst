@@ -14,208 +14,298 @@ Office.onReady((info) => {
 export async function run() {
   try {
     await Excel.run(async (context) => {
-      let ws  = context.workbook.worksheets.getItem("DrugDetails");
+      let ws = context.workbook.worksheets.getItem("DrugDetails");
       let packageDetails = context.workbook.worksheets.getItem("packageDistribution");
       let packageDetailsRange = packageDetails.getRange("A2:D7");
-      let usedRange = ws.getUsedRange().getLastRow()
-      let drugsExpirationPredictions = context.workbook.worksheets.getItem("Drug Replenish Dates(New Kits)");
-      let wsAutoReplenishMedGroups = context.workbook.worksheets.getItem("auto_replenish_med_groups");
-      let wsRevenuePredictions = context.workbook.worksheets.getItem("Revenue Prediction")
-      wsRevenuePredictions.getRangeByIndexes(1,0,10000,50).clear(Excel.ClearApplyTo.contents)
-      drugsExpirationPredictions.getRangeByIndexes(1,0,10000,50).clear(Excel.ClearApplyTo.contents)
-     //Get the Details  
-     usedRange.load("rowIndex")
-     await context.sync()
-     let lastRow = usedRange.rowIndex;
-     let data = ws.getRange(`B${1}:O${lastRow+1}`)
-     data.load("values");
-     packageDetailsRange.load("values");
-     await context.sync()
-    let packageDetailsData = packageDetailsRange.values;
-    let medsObj = {}
-    let emkDetails = {}
-    //Get the drug details
-     console.log(data.values)
-    data.values.forEach(row=>{
-      medsObj[row[0]] = {
-        totalUnitCost: row[3],
-        laCarte: row[4],
-        includedInPackages:[],
-        shelfLife:row[7]
-      }
-      for(let i=8;i<=13;i++){
-        if(row[i].toString().trim() !==""){
-          medsObj[row[0]].includedInPackages.push(data.values[0][i]);
+      let usedRange = ws.getUsedRange().getLastRow();
+      let drugsExpirationPredictions = context.workbook.worksheets.getItem(
+        "Drug Replenish Dates(New Kits)"
+      );
+      let wsAutoReplenishMedGroups = context.workbook.worksheets.getItem(
+        "auto_replenish_med_groups"
+      );
+      let wsRevenuePredictions = context.workbook.worksheets.getItem("Revenue Prediction");
+      let wsAutoReplenishMedGroupsAndPredictions = context.workbook.worksheets.getItem(
+        "autoReplenish+Predictions"
+      );
+      wsRevenuePredictions.getRangeByIndexes(1, 0, 10000, 50).clear(Excel.ClearApplyTo.contents);
+      drugsExpirationPredictions
+        .getRangeByIndexes(1, 0, 10000, 50)
+        .clear(Excel.ClearApplyTo.contents);
+      //Get the Details
+      usedRange.load("rowIndex");
+      await context.sync();
+      let lastRow = usedRange.rowIndex;
+      let data = ws.getRange(`B${1}:O${lastRow + 1}`);
+      data.load("values");
+      packageDetailsRange.load("values");
+      await context.sync();
+      let packageDetailsData = packageDetailsRange.values;
+      let medsObj = {};
+      let emkDetails = {};
+      //Get the drug details
+      console.log(data.values);
+      data.values.forEach((row) => {
+        medsObj[row[0]] = {
+          totalUnitCost: row[3],
+          laCarte: row[4],
+          includedInPackages: [],
+          shelfLife: row[7],
+        };
+        for (let i = 8; i <= 13; i++) {
+          if (row[i].toString().trim() !== "") {
+            medsObj[row[0]].includedInPackages.push(data.values[0][i]);
+          }
+        }
+      });
+
+      packageDetailsData.forEach((row) => {
+        //Create the emk objecst
+        emkDetails[row[0]] = {
+          retailPrice: row[1],
+          newKitShares: row[2],
+          purchasePrice: row[3],
+          drugs: [],
+        };
+      });
+      // console.log(medsObj,emkDetails)
+
+      //Get the New Kit Data
+      let wsNewKit = context.workbook.worksheets.getItem("New Kit Data");
+      let newKitsLastRow = wsNewKit.getUsedRange().getLastRow();
+      newKitsLastRow.load("rowIndex");
+      await context.sync();
+      let newKitsLastRowIndex = newKitsLastRow.rowIndex;
+      let dataRange = wsNewKit.getRange(`A2:B${newKitsLastRowIndex + 1}`);
+      dataRange.load("values");
+      await context.sync();
+      let newKitData = dataRange.values;
+      let salesHistory = {};
+      //Get the Kit Revenue for each Kit and total Revenue
+      let calculatedKitData = newKitData.map((row) => {
+        salesHistory[formatDate(excelSerialDateToJSDate(row[0]))] = row[1];
+        let numberOfKits = row[1];
+        let EMK1 =
+          Math.floor(emkDetails["EMK1"].newKitShares * numberOfKits) *
+          emkDetails["EMK1"].retailPrice;
+        let EMK5 =
+          Math.floor(emkDetails["EMK5"].newKitShares * numberOfKits) *
+          emkDetails["EMK5"].retailPrice;
+        let EMK10 =
+          Math.floor(emkDetails["EMK10"].newKitShares * numberOfKits) *
+          emkDetails["EMK10"].retailPrice;
+        let EMK15 =
+          Math.floor(emkDetails["EMK15"].newKitShares * numberOfKits) *
+          emkDetails["EMK15"].retailPrice;
+        let EMK1Mini =
+          Math.floor(emkDetails["EMK1-Mini"].newKitShares * numberOfKits) *
+          emkDetails["EMK1-Mini"].retailPrice;
+        let EMK10Mini =
+          Math.floor(emkDetails["EMK10-Mini"].newKitShares * numberOfKits) *
+          emkDetails["EMK10-Mini"].retailPrice;
+        return [
+          row[0],
+          row[1],
+          EMK1 + EMK5 + EMK10 + EMK15 + EMK1Mini + EMK10Mini,
+          "",
+          EMK1,
+          EMK5,
+          EMK10,
+          EMK15,
+          EMK1Mini,
+          EMK10Mini,
+        ];
+      });
+      //Add the Kit Revenue to the sheet
+
+      wsNewKit.getRange("A2:J" + (calculatedKitData.length + 1)).values = calculatedKitData;
+      //Add the total  Revenue to the sheet
+      // const revenueLedger = calcRevenue(packages.emk1, salesHistory, projectedSales);
+      // console.log(revenueLedger);
+      //Get the drugs that belong to each Kit
+      data.values.forEach((row) => {
+        row[8] === "X" ? emkDetails["EMK1"]["drugs"].push(row[0]) : "";
+        row[9] === "X" ? emkDetails["EMK5"]["drugs"].push(row[0]) : "";
+        row[10] === "X" ? emkDetails["EMK10"]["drugs"].push(row[0]) : "";
+        row[11] === "X" ? emkDetails["EMK15"]["drugs"].push(row[0]) : "";
+        row[12] === "X" ? emkDetails["EMK1-Mini"]["drugs"].push(row[0]) : "";
+        row[13] === "X" ? emkDetails["EMK10-Mini"]["drugs"].push(row[0]) : "";
+      });
+      //Creating calculation for all drugs per month
+      let newKitDrugPredictions = [];
+      Object.keys(salesHistory).forEach((month) => {
+        let totalKitAmount = salesHistory[month];
+        Object.keys(emkDetails).forEach((kit) => {
+          let kitAmount = Math.floor(totalKitAmount * emkDetails[kit].newKitShares);
+          if (kitAmount < 1) return;
+          emkDetails[kit].drugs.forEach((drug) => {
+            if (medsObj[drug].shelfLife == "" || medsObj[drug].shelfLife == "N/A") return;
+            newKitDrugPredictions.push([
+              month,
+              kit,
+              drug,
+              kitAmount,
+              medsObj[drug].laCarte * kitAmount,
+              medsObj[drug].shelfLife,
+            ]);
+          });
+        });
+      });
+
+      //Adding Replenish Dates to the Drug Details
+      const updatedDrugData = newKitDrugPredictions.map((row) => {
+        const [date, code, description, qty, total, expiryDays] = row;
+        const [year, month] = date.split("-").map(Number);
+        const baseDate = new Date(year, month - 1);
+
+        const replenishments = [];
+
+        for (let i = 1; i <= 10; i++) {
+          const expireDate = new Date(baseDate);
+          expireDate.setDate(expireDate.getDate() + expiryDays * i);
+
+          const expireYear = expireDate.getFullYear();
+          const expireMonth = String(expireDate.getMonth() + 1).padStart(2, "0");
+
+          replenishments.push(`${expireYear}-${expireMonth}`);
+        }
+
+        return [...row, ...replenishments];
+      });
+      drugsExpirationPredictions.getRangeByIndexes(
+        1,
+        0,
+        updatedDrugData.length,
+        updatedDrugData[0].length
+      ).values = updatedDrugData;
+
+      // --- Step 5: Execute everything
+      const baseMap = getBaseKitMap(calculatedKitData);
+      const forecastMap = generateForecast("2025-05", 120, baseMap);
+
+      // Plug in your generated updatedDrugData (with replenishment dates)
+      let drugDataMap = applyDrugDataRevenue(forecastMap, updatedDrugData);
+      let usedRangeAutoReplenishMedGroups = wsAutoReplenishMedGroups.getUsedRange();
+      let lastRowAutoReplenishMedGroups = usedRangeAutoReplenishMedGroups.getLastRow();
+      lastRowAutoReplenishMedGroups.load("rowIndex");
+      await context.sync();
+      //Get Autor replenish sheet data
+      let rangeAutoReplenishMedGroups = wsAutoReplenishMedGroups.getRange("D2:F22011");
+      let rangeAutoReplenishMedGroupsAll = wsAutoReplenishMedGroups.getRangeByIndexes(
+        2,
+        0,
+        lastRowAutoReplenishMedGroups.rowIndex - 1,
+        6
+      );
+      rangeAutoReplenishMedGroups.load("values");
+      rangeAutoReplenishMedGroupsAll.load("values");
+      await context.sync();
+      //TODO
+      //Add the Future expiration dates for the auto replenishments
+      const outputAutoReplenishAndForecast = [
+        [
+          "Group",
+          "Company",
+          "Medication",
+          "Expiration",
+          "Price",
+          "Auto Replenish",
+          "Generated Dates",
+        ],
+      ];
+      console.log(rangeAutoReplenishMedGroupsAll.values);
+      wsAutoReplenishMedGroupsAndPredictions.getUsedRange().clear(Excel.ClearApplyTo.contents);
+      for (const row of rangeAutoReplenishMedGroupsAll.values) {
+        const [group, company, medication, expirationStr, price, autoReplenish] = row;
+
+        if (autoReplenish !== "Enabled" || expirationStr == "N/A" || expirationStr == "") continue;
+
+        const config = medsObj[medication];
+        const baseDate = excelSerialDateToJSDate(expirationStr);
+
+        // Always include original
+        outputAutoReplenishAndForecast.push([
+          group,
+          company,
+          medication,
+          baseDate ? formatMonth(baseDate) : "N/A",
+          price,
+          autoReplenish,
+          "",
+        ]);
+
+        if (!config || !baseDate) continue;
+
+        const { shelfLife, laCarte: configPrice } = config;
+
+        for (let i = 1; i <= 20; i++) {
+          const futureDate = addDays(baseDate, shelfLife * i);
+          outputAutoReplenishAndForecast.push([
+            group,
+            company,
+            medication,
+            formatMonth(futureDate),
+            parseFloat(price.toFixed(2)),
+            autoReplenish,
+            "Generated",
+          ]);
         }
       }
-    })
 
+      wsAutoReplenishMedGroupsAndPredictions.getRangeByIndexes(
+        0,
+        0,
+        outputAutoReplenishAndForecast.length,
+        outputAutoReplenishAndForecast[0].length
+      ).values = outputAutoReplenishAndForecast;
+      await context.sync();
+      // Auto-replenish items (only applied once)
+      let autoReplenish = applyAutoReplenishOnce(forecastMap, outputAutoReplenishAndForecast);
+      console.log(drugDataMap, baseMap, autoReplenish);
+      // 1. Combine all unique months
 
-    packageDetailsData.forEach(row=>{
-      //Create the emk objecst
-      emkDetails[row[0]] = {
-        retailPrice:row[1],
-        newKitShares: row[2],
-        purchasePrice: row[3],
-        drugs:[]
+      // --- Step 6: Final Output
+      // const finalRevenueForecast = Array.from(forecastMap.entries()).map(([month, revenue]) => [month, revenue]);
+
+      const allMonths = new Set([
+        ...drugDataMap.keys(),
+        ...autoReplenish.keys(),
+        ...baseMap.keys(),
+        ...forecastMap.keys(),
+      ]);
+
+      // 2. Generate final forecast array
+      const finalRevenueForecast = [];
+
+      for (const month of [...allMonths].sort()) {
+        const newkit = baseMap.get(month) || 0;
+        const auto = autoReplenish.get(month) || 0;
+        const drugData = drugDataMap.get(month) || 0;
+        const totalRevenue = newkit + auto + drugData;
+
+        finalRevenueForecast.push([month, totalRevenue, newkit, auto, drugData]);
       }
-    })
-    // console.log(medsObj,emkDetails)
 
-    //Get the New Kit Data
-    let wsNewKit = context.workbook.worksheets.getItem("New Kit Data");
-    let newKitsLastRow = wsNewKit.getUsedRange().getLastRow();
-    newKitsLastRow.load("rowIndex");
-    await context.sync();
-    let newKitsLastRowIndex = newKitsLastRow.rowIndex;
-    let dataRange = wsNewKit.getRange(`A2:B${newKitsLastRowIndex+1}`);
-    dataRange.load("values");
-    await context.sync()
-    let newKitData = dataRange.values
-    let salesHistory ={}
-     //Get the Kit Revenue for each Kit and total Revenue
-    let calculatedKitData = newKitData.map(row=>{
-      salesHistory[formatDate(excelSerialDateToJSDate(row[0]))] = row[1]
-      let numberOfKits = row[1]
-      let EMK1= Math.floor(emkDetails["EMK1"].newKitShares  * numberOfKits)  * emkDetails["EMK1"].retailPrice        
-      let EMK5= Math.floor(emkDetails["EMK5"].newKitShares  * numberOfKits)  * emkDetails["EMK5"].retailPrice   
-      let EMK10= Math.floor(emkDetails["EMK10"].newKitShares  * numberOfKits)  * emkDetails["EMK10"].retailPrice   
-      let EMK15= Math.floor(emkDetails["EMK15"].newKitShares  * numberOfKits)  * emkDetails["EMK15"].retailPrice   
-      let EMK1Mini=Math.floor(emkDetails["EMK1-Mini"].newKitShares  * numberOfKits)  * emkDetails["EMK1-Mini"].retailPrice   
-      let EMK10Mini=Math.floor(emkDetails["EMK10-Mini"].newKitShares  * numberOfKits)  * emkDetails["EMK10-Mini"].retailPrice   
-      return [row[0],row[1],(EMK1+EMK5+EMK10+EMK15+EMK1Mini+EMK10Mini),"",EMK1,EMK5,EMK10,EMK15,EMK1Mini,EMK10Mini];
-    })
-    //Add the Kit Revenue to the sheet
+      wsRevenuePredictions.getRangeByIndexes(
+        1,
+        0,
+        finalRevenueForecast.length,
+        finalRevenueForecast[0].length
+      ).values = finalRevenueForecast;
 
-    wsNewKit.getRange("A2:J"+(calculatedKitData.length+1)).values = calculatedKitData
-    //Add the total  Revenue to the sheet 
-    // const revenueLedger = calcRevenue(packages.emk1, salesHistory, projectedSales);
-    // console.log(revenueLedger);  
-    //Get the drugs that belong to each Kit 
-    data.values.forEach(row=>{
-      row[8] === "X" ? emkDetails["EMK1"]["drugs"].push(row[0]):"";
-      row[9] === "X" ? emkDetails["EMK5"]["drugs"].push(row[0]):"";
-      row[10] === "X" ?  emkDetails["EMK10"]["drugs"].push(row[0]):"";
-      row[11] === "X" ?  emkDetails["EMK15"]["drugs"].push(row[0]):"";
-      row[12] === "X" ? emkDetails["EMK1-Mini"]["drugs"].push(row[0]):"";
-      row[13] === "X" ? emkDetails["EMK10-Mini"]["drugs"].push(row[0]):"";
-    })
-    //Creating calculation for all drugs per month
-    let newKitDrugPredictions =[]
-    Object.keys(salesHistory).forEach(month=>{
-      let totalKitAmount = salesHistory[month];
-      Object.keys(emkDetails).forEach(kit=>{
-        let kitAmount = Math.floor(totalKitAmount*emkDetails[kit].newKitShares)
-        if(kitAmount < 1 ) return
-       emkDetails[kit].drugs.forEach(drug=>{
-         if(medsObj[drug].shelfLife =="" || medsObj[drug].shelfLife =="N/A") return
-          newKitDrugPredictions.push([month,kit,drug,kitAmount,medsObj[drug].laCarte*kitAmount,medsObj[drug].shelfLife])
-        })
-      })
-    })
-    
-    //Adding Replenish Dates to the Drug Details
-    const updatedDrugData = newKitDrugPredictions.map(row => {
-      const [date, code, description, qty, total, expiryDays] = row;
-      const [year, month] = date.split("-").map(Number);
-      const baseDate = new Date(year, month - 1);
-    
-      const replenishments = [];
-    
-      for (let i = 1; i <= 10; i++) {
-        const expireDate = new Date(baseDate);
-        expireDate.setDate(expireDate.getDate() + expiryDays * i);
-    
-        const expireYear = expireDate.getFullYear();
-        const expireMonth = String(expireDate.getMonth() + 1).padStart(2, '0');
-    
-        replenishments.push(`${expireYear}-${expireMonth}`);
-      }
-    
-      return [...row, ...replenishments];
-    });
- drugsExpirationPredictions.getRangeByIndexes(1,0,updatedDrugData.length,updatedDrugData[0].length).values = updatedDrugData
-    // --- Step 5: Execute everything
-const baseMap = getBaseKitMap(calculatedKitData);
-const forecastMap = generateForecast("2025-05", 120,baseMap);
-
-// Plug in your generated updatedDrugData (with replenishment dates)
-let drugDataMap = applyDrugDataRevenue(forecastMap, updatedDrugData);
-
-//Get Autor replenish sheet data
-let rangeAutoReplenishMedGroups =  wsAutoReplenishMedGroups.getRange("D2:F22011")
-rangeAutoReplenishMedGroups.load("values")
-await context.sync()
-// Auto-replenish items (only applied once)
-console.log(rangeAutoReplenishMedGroups.values.splice(0,10))
-let autoReplenish = applyAutoReplenishOnce(forecastMap,rangeAutoReplenishMedGroups.values);
-console.log(drugDataMap,baseMap,autoReplenish);
-// 1. Combine all unique months
-
-// --- Step 6: Final Output
-// const finalRevenueForecast = Array.from(forecastMap.entries()).map(([month, revenue]) => [month, revenue]);
-
-const allMonths = new Set([
-  ...drugDataMap.keys(),
-  ...autoReplenish.keys(),
-  ...baseMap.keys(),
-  ...forecastMap.keys()
-]);
-
-// 2. Generate final forecast array
-const finalRevenueForecast= [];
-
-for (const month of [...allMonths].sort()) {
-  const newkit = baseMap.get(month) || 0;
-  const auto = autoReplenish.get(month) || 0;
-  const drugData = drugDataMap.get(month) || 0;
-  const totalRevenue = newkit + auto + drugData;
-
-  finalRevenueForecast.push([month, totalRevenue, newkit, auto, drugData]);
-}
-
-wsRevenuePredictions.getRangeByIndexes(1,0,finalRevenueForecast.length,finalRevenueForecast[0].length).values = finalRevenueForecast;
-
-console.table(finalRevenueForecast);
-    return context.sync()
+      console.table(finalRevenueForecast);
+      return context.sync();
     });
   } catch (error) {
     console.error(error);
   }
 }
 
-// ─── 1. Define your package ────────────────────────────────────────────────
-// const packages = {
-//   emk1: {
-//     packagePrice: 100,       // one‐time package sale price
-//     drugs: [
-//       { id: 'a', price: 10,  replenishDays: 300 },  // auto-replenishable every 300d
-//       { id: 'b', price: 15,  replenishDays: 200 },  
-//       { id: 'c', price: 5,   replenishDays: 550 },
-//       { id: 'd', price: 8 }   // no replenishDays → non-replenishable
-//     ]
-//   }
-// };
-
-// // ─── 2. Your past + future sales maps ─────────────────────────────────────
-// // format: { "YYYY-MM": unitsSold }
-// const salesHistory = {
-//   '2022-01': 10,
-//   '2022-02': 12,
-//   // … all of 2022, 2023, 2024 …
-//   '2025-01': 8    // Jan 2025 sales
-// };
-// const projectedSales = generateProjections('2025-02', '2035-03', 5);
-
-// ─── 3. Revenue calculator ────────────────────────────────────────────────
-// --- Step 1: Monthly base revenue
-
-
 function getBaseKitMap(baseKitRevenue) {
   const map = new Map();
-  baseKitRevenue.forEach(([dateStr,kitQuantity, revenue]) => {
+  baseKitRevenue.forEach(([dateStr, kitQuantity, revenue]) => {
     const date = new excelSerialDateToJSDate(dateStr);
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
     map.set(key, revenue);
   });
   return map;
@@ -229,7 +319,7 @@ function generateForecast(start = "2023-06", months = 120, baseMap = new Map()) 
 
   for (let i = 0; i < months; i++) {
     const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, "0");
     const key = `${year}-${month}`;
     const baseRevenue = baseMap.get(key) || 0;
     forecast.set(key, baseRevenue);
@@ -245,34 +335,41 @@ function applyDrugDataRevenue(forecastMap, drugData) {
   for (const row of drugData) {
     const total = parseFloat(row[4]);
     const replenishmentDates = row.slice(6);
-     // dynamically added dates
-    replenishmentDates.forEach(date => {
+    // dynamically added dates
+    replenishmentDates.forEach((date) => {
       if (forecastMap.has(date)) {
         forecastMap.set(date, forecastMap.get(date) + total);
-        drugDataMap.set(date,drugDataMap.get(date)!=undefined? drugDataMap.get(date)+total:total)
+        drugDataMap.set(
+          date,
+          drugDataMap.get(date) != undefined ? drugDataMap.get(date) + total : total
+        );
       }
     });
   }
-  return drugDataMap
+  return drugDataMap;
 }
 
 // --- Step 4: Add Auto Replenish (just once, at expiration date)
 function applyAutoReplenishOnce(forecastMap, autoData) {
   let autoReplenish = new Map();
-  autoData.forEach(row => {
-    const [expDate, priceStr, status] = row;
+  autoData.forEach((row) => {
+    const [Group, Company, Medication, expDate, priceStr, status] = row;
 
     if (status !== "Enabled") return;
-    const price = typeof priceStr=="string" ? parseFloat(priceStr.replace("$", "")):priceStr;
-    
+    const price = typeof priceStr == "string" ? parseFloat(priceStr.replace("$", "")) : priceStr;
+
     // const [expMonth, , expYear] = expDate.split("/").map(Number);
     // const key = `${expYear}-${String(expMonth).padStart(2, '0')}`;
-    const date = new excelSerialDateToJSDate(expDate);
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    const date = new parseMonth(expDate);
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
     if (forecastMap.has(key)) {
-      if(!isNaN(price))
-      forecastMap.set(key, forecastMap.get(key) + price);
-      autoReplenish.set(key,autoReplenish.get(key) !== undefined? autoReplenish.get(key) + price: price)
+      if (!isNaN(price)) {
+        forecastMap.set(key, forecastMap.get(key) + price);
+        autoReplenish.set(
+          key,
+          autoReplenish.get(key) !== undefined ? autoReplenish.get(key) + price : price
+        );
+      }
     }
   });
   return autoReplenish;
@@ -302,43 +399,43 @@ function applyAutoReplenishOnce(forecastMap, autoData) {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function parseMonth(ym) {
-  const [y,m] = ym.split('-').map(Number);
-  return new Date(Date.UTC(y, m-1, 1));
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1));
 }
 function formatMonth(dt) {
   const y = dt.getUTCFullYear(),
-        m = String(dt.getUTCMonth()+1).padStart(2,'0');
+    m = String(dt.getUTCMonth() + 1).padStart(2, "0");
   return `${y}-${m}`;
 }
 function addDays(dt, n) {
-  return new Date(dt.valueOf() + n*864e5);
+  return new Date(dt.valueOf() + n * 864e5);
 }
 function addMonths(dt, n) {
   const y = dt.getUTCFullYear(),
-        mo = dt.getUTCMonth() + n;
-  return new Date(Date.UTC(y + Math.floor(mo/12), mo%12, 1));
+    mo = dt.getUTCMonth() + n;
+  return new Date(Date.UTC(y + Math.floor(mo / 12), mo % 12, 1));
 }
 function generateProjections(start, end, perMonth) {
   const result = {};
-  let cur = parseMonth(start), last = parseMonth(end);
+  let cur = parseMonth(start),
+    last = parseMonth(end);
   while (cur <= last) {
-    result[ formatMonth(cur) ] = perMonth;
+    result[formatMonth(cur)] = perMonth;
     cur = addMonths(cur, 1);
   }
   return result;
 }
 function formatDate(date) {
   const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0'); // Months are 0-indexed
-  const day = String(date.getDate()).padStart(2, '0');
+  const month = String(date.getMonth() + 1).padStart(2, "0"); // Months are 0-indexed
+  const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}`;
 }
 function excelSerialDateToJSDate(serial) {
-  const utc_days  = Math.floor(serial - 25569);
-  const utc_value = utc_days * 86400; 
+  const utc_days = Math.floor(serial - 25569);
+  const utc_value = utc_days * 86400;
   const date = new Date(utc_value * 1000);
 
   return date;
 }
 // ─── run it ────────────────────────────────────────────────────────────────
-
