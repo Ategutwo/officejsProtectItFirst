@@ -25,9 +25,9 @@ export async function run() {
         "auto_replenish_med_groups"
       );
       let wsRevenuePredictions = context.workbook.worksheets.getItem("Revenue Prediction");
-      let wsAutoReplenishMedGroupsAndPredictions = context.workbook.worksheets.getItem(
-        "autoReplenish+Predictions"
-      );
+      // let wsAutoReplenishMedGroupsAndPredictions = context.workbook.worksheets.getItem(
+      //   "autoReplenish+Predictions"
+      // );
       wsRevenuePredictions.getRangeByIndexes(1, 0, 10000, 50).clear(Excel.ClearApplyTo.contents);
       drugsExpirationPredictions
         .getRangeByIndexes(1, 0, 10000, 50)
@@ -214,7 +214,7 @@ export async function run() {
         ],
       ];
       console.log(rangeAutoReplenishMedGroupsAll.values);
-      wsAutoReplenishMedGroupsAndPredictions.getUsedRange().clear(Excel.ClearApplyTo.contents);
+      // wsAutoReplenishMedGroupsAndPredictions.getUsedRange().clear(Excel.ClearApplyTo.contents);
       for (const row of rangeAutoReplenishMedGroupsAll.values) {
         const [group, company, medication, expirationStr, price, autoReplenish] = row;
 
@@ -289,17 +289,17 @@ export async function run() {
       await context.sync();
       console.table(finalRevenueForecast);
       
-      const BATCH_SIZE = 10000;
+      // const BATCH_SIZE = 10000;
 
-      for (let startRow = 0; startRow < outputAutoReplenishAndForecast.length; startRow += BATCH_SIZE) {
-          const chunk = outputAutoReplenishAndForecast.slice(startRow, startRow + BATCH_SIZE);
+      // for (let startRow = 0; startRow < outputAutoReplenishAndForecast.length; startRow += BATCH_SIZE) {
+      //     const chunk = outputAutoReplenishAndForecast.slice(startRow, startRow + BATCH_SIZE);
           
-          wsAutoReplenishMedGroupsAndPredictions
-              .getRangeByIndexes(startRow, 0, chunk.length, chunk[0].length)
-              .values = chunk;
+      //     wsAutoReplenishMedGroupsAndPredictions
+      //         .getRangeByIndexes(startRow, 0, chunk.length, chunk[0].length)
+      //         .values = chunk;
       
-          await context.sync();
-      }
+      //     await context.sync();
+      // }
       
       return context.sync();
     });
