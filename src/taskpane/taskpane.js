@@ -181,7 +181,7 @@ export async function run() {
 
       // --- Step 5: Execute everything
       const baseMap = getBaseKitMap(calculatedKitData);
-      const forecastMap = generateForecast("2025-05", 300, baseMap);
+      const forecastMap = generateForecast("2025-07", 300, baseMap);
 
       // Plug in your generated updatedDrugData (with replenishment dates)
       let drugDataMap = applyDrugDataRevenue(forecastMap, updatedDrugData);
