@@ -310,13 +310,22 @@ export async function run() {
 
 function getBaseKitMap(baseKitRevenue) {
   const map = new Map();
+
+  const now = new Date();
+  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1); // First day of next month
+
   baseKitRevenue.forEach(([dateStr, kitQuantity, revenue]) => {
-    const date = new excelSerialDateToJSDate(dateStr);
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-    map.set(key, revenue);
+    const date = excelSerialDateToJSDate(dateStr);
+    console.log("Here we are")
+    if (date >= nextMonth) {
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      map.set(key, revenue);
+    }
   });
+
   return map;
 }
+
 
 // --- Step 2: Forecast structure (June 2023 → May 2033)
 function generateForecast(start = "2023-06", months = 120, baseMap = new Map()) {
@@ -444,5 +453,21 @@ function excelSerialDateToJSDate(serial) {
   const date = new Date(utc_value * 1000);
 
   return date;
+}
+/**
+ * @param {Array} headers - List of dates structures as month-year
+ * 
+ */
+function populateAutoReplenishHistory(headers){
+  let currentDate = new Date();
+  let date = formatDate(currentDate);
+  //Check the headers of the sheet to see if the date already exists
+
+  //If it exists
+  //Add the data to the column where the date exists.
+
+  //if not
+  //add new column and the date to that column
+
 }
 // ─── run it ────────────────────────────────────────────────────────────────
