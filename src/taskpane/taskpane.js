@@ -458,16 +458,11 @@ function excelSerialDateToJSDate(serial) {
  * @param {Array} headers - List of dates structures as month-year
  * 
  */
-function populateAutoReplenishHistory(headers){
+function populateAutoReplenishHistory(headers,autoReplenishmentData){
   let currentDate = new Date();
-  let date = formatDate(currentDate);
+  let dateStr= formatDate(currentDate);
   //Check the headers of the sheet to see if the date already exists
-
-  //If it exists
-  //Add the data to the column where the date exists.
-
-  //if not
-  //add new column and the date to that column
-
+  let index =  headers.indexOf(dateStr);
+  return index
 }
 // ─── run it ────────────────────────────────────────────────────────────────
