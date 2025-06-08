@@ -12,12 +12,15 @@ Office.onReady((info) => {
 });
 
 export async function run() {
+  // insertOrReplaceDataByHeader([]);
+  // return
   try {
     await Excel.run(async (context) => {
       let ws = context.workbook.worksheets.getItem("DrugDetails");
       let packageDetails = context.workbook.worksheets.getItem("packageDistribution");
       let packageDetailsRange = packageDetails.getRange("A2:D7");
       let usedRange = ws.getUsedRange().getLastRow();
+      let wsAutoReplenishHistroy = context.workbook.worksheets.getItem("AutoReplenishHistory");
       let drugsExpirationPredictions = context.workbook.worksheets.getItem(
         "Drug Replenish Dates(New Kits)"
       );
@@ -68,7 +71,7 @@ export async function run() {
           drugs: [],
         };
       });
-      // console.log(medsObj,emkDetails)
+      console.log(medsObj,"Meds Object")
 
       //Get the New Kit Data
       let wsNewKit = context.workbook.worksheets.getItem("New Kit Data");
@@ -178,7 +181,20 @@ export async function run() {
         updatedDrugData.length,
         updatedDrugData[0].length
       ).values = updatedDrugData;
+      //Get the history of auto replenishments
+        // Get the used range of the worksheet
+      // const autoReplenishmentsHistroyusedRange = wsAutoReplenishHistroy.getUsedRange();
+      // usedRange.load("values");
 
+      //   await context.sync();
+      // const firstDataRow = usedRange.values[1];
+      // let column = getAutoReplenishmentHistoryColumn(firstDataRow);
+      // if(column !== -1){
+      //   //Add it to the column number 
+      // }
+      // else{
+
+      // }
       // --- Step 5: Execute everything
       const baseMap = getBaseKitMap(calculatedKitData);
       const forecastMap = generateForecast("2025-07", 300, baseMap);
@@ -190,14 +206,12 @@ export async function run() {
       lastRowAutoReplenishMedGroups.load("rowIndex");
       await context.sync();
       //Get Autor replenish sheet data
-      let rangeAutoReplenishMedGroups = wsAutoReplenishMedGroups.getRange("D2:F22011");
       let rangeAutoReplenishMedGroupsAll = wsAutoReplenishMedGroups.getRangeByIndexes(
         2,
         0,
         lastRowAutoReplenishMedGroups.rowIndex - 1,
         6
       );
-      rangeAutoReplenishMedGroups.load("values");
       rangeAutoReplenishMedGroupsAll.load("values");
       await context.sync();
       //TODO
@@ -213,7 +227,6 @@ export async function run() {
           "Generated Dates",
         ],
       ];
-      console.log(rangeAutoReplenishMedGroupsAll.values);
       // wsAutoReplenishMedGroupsAndPredictions.getUsedRange().clear(Excel.ClearApplyTo.contents);
       for (const row of rangeAutoReplenishMedGroupsAll.values) {
         const [group, company, medication, expirationStr, price, autoReplenish] = row;
@@ -234,7 +247,10 @@ export async function run() {
           "",
         ]);
 
-        if (!config || !baseDate) continue;
+        if (!config || !baseDate){ 
+      
+          continue
+        };
 
         const { shelfLife, laCarte: configPrice } = config;
 
@@ -288,6 +304,48 @@ export async function run() {
       ).values = finalRevenueForecast;
       await context.sync();
       console.table(finalRevenueForecast);
+
+      //AutoReplenish History
+      let autoReplenishDatesAndData = getDatesAndData(finalRevenueForecast);
+      const sheet = context.workbook.worksheets.getItem("AutoReplenishHistory");
+    //Get last column
+    const autoReplenishHistoryUsedRange = sheet.getUsedRange();
+  autoReplenishHistoryUsedRange.load(["columnIndex", "columnCount","rowCount"]);
+  await context.sync();
+        // Load row 2 headers (row index 1)
+    if(autoReplenishHistoryUsedRange.columnCount <=1) return //There is no data.
+    const headerRange = sheet.getRangeByIndexes(1, 1, 1, autoReplenishHistoryUsedRange.columnCount-1);
+    const datesRange = sheet.getRangeByIndexes(2,0,autoReplenishHistoryUsedRange.rowCount-2,1);
+    headerRange.load("values");
+    datesRange.load("values");
+    await context.sync();
+    console.log(datesRange.values)
+    const headers = headerRange.values[0] // Row 2
+    let currentMonth = formatDate(new Date());
+    let currentMonthPostion = headers.indexOf(currentMonth) 
+    let   datesInHistory = datesRange.values.map(x=>x[0]);
+    let beginningDateIndex = datesInHistory.indexOf(autoReplenishDatesAndData[0][0]);
+    console.log(currentMonth=headers[0])
+    //Check if it exists in the headers
+    if(currentMonthPostion !== -1){ //it Exists
+      //Add data to the same column
+      sheet.getRangeByIndexes(2+beginningDateIndex,currentMonthPostion+1,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
+      sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,0).values = autoReplenishDatesAndData.map(x=>[x[0]])
+    }
+    else{
+      //Add data to a new column(The last column) starting at index 1 
+      //Get the position in the dates column of the current starting date in the date array parameter
+      //Add dates to it and add the data from the index of that row
+      const currentMonthFormatted = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+
+    sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).numberFormat = [["@"]]; // force text
+    sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).values = [[currentMonthFormatted]];
+      sheet.getRangeByIndexes(2+beginningDateIndex,autoReplenishHistoryUsedRange.columnCount,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
+      sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,0).values = autoReplenishDatesAndData.map(x=>[x[0]])
+    }
+        await context.sync();
+
+
       
       // const BATCH_SIZE = 10000;
 
@@ -307,7 +365,11 @@ export async function run() {
     console.error(error);
   }
 }
-
+function getDatesAndData(foreCastData=[[]]){
+  return foreCastData.map(
+    x => [x[0],x[3]]
+  )
+}
 function getBaseKitMap(baseKitRevenue) {
   const map = new Map();
 
@@ -458,11 +520,43 @@ function excelSerialDateToJSDate(serial) {
  * @param {Array} headers - List of dates structures as month-year
  * 
  */
-function populateAutoReplenishHistory(headers,autoReplenishmentData){
+function getAutoReplenishmentHistoryColumn(headers){
   let currentDate = new Date();
   let dateStr= formatDate(currentDate);
   //Check the headers of the sheet to see if the date already exists
+
   let index =  headers.indexOf(dateStr);
   return index
 }
 // ─── run it ────────────────────────────────────────────────────────────────
+async function insertOrReplaceDataByHeader(dates, Data =[300,800]) {
+  await Excel.run(async (context) => {
+    const sheet = context.workbook.worksheets.getItem("AutoReplenishHistory");
+    //Get last column
+    const usedRange = sheet.getUsedRange();
+  usedRange.load(["columnIndex", "columnCount"]);
+  await context.sync();
+        // Load row 2 headers (row index 1)
+        if(usedRange.columnCount <=1) return //There is no data.
+    const headerRange = sheet.getRangeByIndexes(1, 1, 1, usedRange.columnCount-1);
+    headerRange.load("values");
+    await context.sync();
+    console.log(headerRange.values)
+    const headers = headerRange.values[0] // Row 2
+    let currentMonth = formatDate(new Date(2025,4,1));
+    let currentMonthPostion = headers.indexOf(currentMonth) 
+    console.log(currentMonth=headers[0])
+    //Check if it exists in the headers
+    if(currentMonthPostion !== -1){ //it Exists
+      //Add data to the same column
+      console.log(Data.map(x=>[x]))
+      sheet.getRangeByIndexes(2,currentMonthPostion+1,Data.length,1).values = Data.map(x=>[x])
+    }
+    else{
+      //Add data to a new column(The last column) starting at index 1 
+      //Get the position in the dates column of the current starting date in the date array parameter
+      //Add dates to it and add the data from the index of that row
+    }
+        await context.sync();
+  });
+}
