@@ -321,30 +321,32 @@ export async function run() {
     await context.sync();
     console.log(datesRange.values)
     const headers = headerRange.values[0] // Row 2
-    let currentMonth = formatDate(new Date());
+    let currentMonth = formatDateWithDay(new Date());
     let currentMonthPostion = headers.indexOf(currentMonth) 
     let   datesInHistory = datesRange.values.map(x=>x[0]);
     let beginningDateIndex = datesInHistory.indexOf(autoReplenishDatesAndData[0][0]);
     console.log(currentMonth=headers[0])
+    await context.sync();
     //Check if it exists in the headers
     if(currentMonthPostion !== -1){ //it Exists
       //Add data to the same column
       sheet.getRangeByIndexes(2+beginningDateIndex,currentMonthPostion+1,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
-      sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,0).values = autoReplenishDatesAndData.map(x=>[x[0]])
+      sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[0]])
+      
     }
     else{
       //Add data to a new column(The last column) starting at index 1 
       //Get the position in the dates column of the current starting date in the date array parameter
       //Add dates to it and add the data from the index of that row
-      const currentMonthFormatted = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+      const currentMonthFormatted = formatDateWithDay(new Date());
 
     sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).numberFormat = [["@"]]; // force text
     sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).values = [[currentMonthFormatted]];
-      sheet.getRangeByIndexes(2+beginningDateIndex,autoReplenishHistoryUsedRange.columnCount,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
-      sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,0).values = autoReplenishDatesAndData.map(x=>[x[0]])
+    sheet.getRangeByIndexes(2+beginningDateIndex,autoReplenishHistoryUsedRange.columnCount,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
+    sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[0]])
     }
-        await context.sync();
-
+        
+    await context.sync();
 
       
       // const BATCH_SIZE = 10000;
@@ -477,8 +479,14 @@ function applyAutoReplenishOnce(forecastMap, autoData) {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 function parseMonth(ym) {
+  // More robust parsing of YYYY-MM strings
   const [y, m] = ym.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, 1));
+}
+// Instead of using new Date() directly:
+function getCurrentMonthUTC() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
 }
 function formatMonth(dt) {
   const y = dt.getUTCFullYear(),
@@ -504,17 +512,30 @@ function generateProjections(start, end, perMonth) {
   return result;
 }
 function formatDate(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0"); // Months are 0-indexed
-  const day = String(date.getDate()).padStart(2, "0");
+  // Always use UTC to avoid timezone issues
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   return `${year}-${month}`;
 }
+function formatDateWithDay(date) {
+  // Always use UTC to avoid timezone issues
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = date.getUTCDate()
+  return `${year}-${month}-${day}`;
+}
 function excelSerialDateToJSDate(serial) {
-  const utc_days = Math.floor(serial - 25569);
-  const utc_value = utc_days * 86400;
-  const date = new Date(utc_value * 1000);
-
-  return date;
+  // UTC-based conversion to avoid timezone issues
+  const utcDays = Math.floor(serial - 25569); // 25569 = days between 1900 and 1970
+  const utcValue = utcDays * 86400; // 86400 = seconds per day
+  const dateInfo = new Date(utcValue * 1000);
+  
+  // Create a new date using UTC values to avoid timezone offset
+  return new Date(Date.UTC(
+      dateInfo.getUTCFullYear(),
+      dateInfo.getUTCMonth(),
+      dateInfo.getUTCDate()
+  ));
 }
 /**
  * @param {Array} headers - List of dates structures as month-year
@@ -543,7 +564,7 @@ async function insertOrReplaceDataByHeader(dates, Data =[300,800]) {
     await context.sync();
     console.log(headerRange.values)
     const headers = headerRange.values[0] // Row 2
-    let currentMonth = formatDate(new Date(2025,4,1));
+    let currentMonth = formatDate(getCurrentMonthUTC());
     let currentMonthPostion = headers.indexOf(currentMonth) 
     console.log(currentMonth=headers[0])
     //Check if it exists in the headers
