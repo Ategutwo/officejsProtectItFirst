@@ -12,8 +12,6 @@ Office.onReady((info) => {
 });
 
 export async function run() {
-  // insertOrReplaceDataByHeader([]);
-  // return
   try {
     await Excel.run(async (context) => {
       let ws = context.workbook.worksheets.getItem("DrugDetails");
@@ -28,13 +26,12 @@ export async function run() {
         "auto_replenish_med_groups"
       );
       let wsRevenuePredictions = context.workbook.worksheets.getItem("Revenue Prediction");
-      // let wsAutoReplenishMedGroupsAndPredictions = context.workbook.worksheets.getItem(
-      //   "autoReplenish+Predictions"
-      // );
+      
       wsRevenuePredictions.getRangeByIndexes(1, 0, 10000, 50).clear(Excel.ClearApplyTo.contents);
       drugsExpirationPredictions
         .getRangeByIndexes(1, 0, 10000, 50)
         .clear(Excel.ClearApplyTo.contents);
+      
       //Get the Details
       usedRange.load("rowIndex");
       await context.sync();
@@ -46,6 +43,7 @@ export async function run() {
       let packageDetailsData = packageDetailsRange.values;
       let medsObj = {};
       let emkDetails = {};
+      
       //Get the drug details
       console.log(data.values);
       data.values.forEach((row) => {
@@ -84,9 +82,13 @@ export async function run() {
       await context.sync();
       let newKitData = dataRange.values;
       let salesHistory = {};
+      
       //Get the Kit Revenue for each Kit and total Revenue
       let calculatedKitData = newKitData.map((row) => {
-        salesHistory[formatDate(excelSerialDateToJSDate(row[0]))] = row[1];
+        let currentMonthKey = formatDate(excelSerialDateToJSDate(row[0]))
+        if(!isPastMonth(currentMonthKey)){
+          salesHistory[currentMonthKey] = row[1];
+        }
         let numberOfKits = row[1];
         let EMK1 =
           Math.floor(emkDetails["EMK1"].newKitShares * numberOfKits) *
@@ -119,12 +121,10 @@ export async function run() {
           EMK10Mini,
         ];
       });
+      
       //Add the Kit Revenue to the sheet
-
       wsNewKit.getRange("A2:J" + (calculatedKitData.length + 1)).values = calculatedKitData;
-      //Add the total  Revenue to the sheet
-      // const revenueLedger = calcRevenue(packages.emk1, salesHistory, projectedSales);
-      // console.log(revenueLedger);
+      
       //Get the drugs that belong to each Kit
       data.values.forEach((row) => {
         row[8] === "X" ? emkDetails["EMK1"]["drugs"].push(row[0]) : "";
@@ -134,6 +134,7 @@ export async function run() {
         row[12] === "X" ? emkDetails["EMK1-Mini"]["drugs"].push(row[0]) : "";
         row[13] === "X" ? emkDetails["EMK10-Mini"]["drugs"].push(row[0]) : "";
       });
+      
       //Creating calculation for all drugs per month
       let newKitDrugPredictions = [];
       Object.keys(salesHistory).forEach((month) => {
@@ -159,42 +160,30 @@ export async function run() {
       const updatedDrugData = newKitDrugPredictions.map((row) => {
         const [date, code, description, qty, total, expiryDays] = row;
         const [year, month] = date.split("-").map(Number);
-        const baseDate = new Date(year, month - 1);
+        const baseDate = new Date(Date.UTC(year, month - 1, 1)); // Use UTC
 
         const replenishments = [];
 
         for (let i = 1; i <= 10; i++) {
           const expireDate = new Date(baseDate);
-          expireDate.setDate(expireDate.getDate() + expiryDays * i);
+          expireDate.setUTCDate(expireDate.getUTCDate() + expiryDays * i); // Use UTC
 
-          const expireYear = expireDate.getFullYear();
-          const expireMonth = String(expireDate.getMonth() + 1).padStart(2, "0");
+          const expireYear = expireDate.getUTCFullYear();
+          const expireMonth = String(expireDate.getUTCMonth() + 1).padStart(2, "0");
 
           replenishments.push(`${expireYear}-${expireMonth}`);
         }
 
         return [...row, ...replenishments];
       });
+      
       drugsExpirationPredictions.getRangeByIndexes(
         1,
         0,
         updatedDrugData.length,
         updatedDrugData[0].length
       ).values = updatedDrugData;
-      //Get the history of auto replenishments
-        // Get the used range of the worksheet
-      // const autoReplenishmentsHistroyusedRange = wsAutoReplenishHistroy.getUsedRange();
-      // usedRange.load("values");
-
-      //   await context.sync();
-      // const firstDataRow = usedRange.values[1];
-      // let column = getAutoReplenishmentHistoryColumn(firstDataRow);
-      // if(column !== -1){
-      //   //Add it to the column number 
-      // }
-      // else{
-
-      // }
+      
       // --- Step 5: Execute everything
       const baseMap = getBaseKitMap(calculatedKitData);
       const forecastMap = generateForecast("2025-07", 300, baseMap);
@@ -205,6 +194,7 @@ export async function run() {
       let lastRowAutoReplenishMedGroups = usedRangeAutoReplenishMedGroups.getLastRow();
       lastRowAutoReplenishMedGroups.load("rowIndex");
       await context.sync();
+      
       //Get Autor replenish sheet data
       let rangeAutoReplenishMedGroupsAll = wsAutoReplenishMedGroups.getRangeByIndexes(
         2,
@@ -214,7 +204,7 @@ export async function run() {
       );
       rangeAutoReplenishMedGroupsAll.load("values");
       await context.sync();
-      //TODO
+      
       //Add the Future expiration dates for the auto replenishments
       const outputAutoReplenishAndForecast = [
         [
@@ -227,7 +217,7 @@ export async function run() {
           "Generated Dates",
         ],
       ];
-      // wsAutoReplenishMedGroupsAndPredictions.getUsedRange().clear(Excel.ClearApplyTo.contents);
+
       for (const row of rangeAutoReplenishMedGroupsAll.values) {
         const [group, company, medication, expirationStr, price, autoReplenish] = row;
 
@@ -248,7 +238,6 @@ export async function run() {
         ]);
 
         if (!config || !baseDate){ 
-      
           continue
         };
 
@@ -268,15 +257,11 @@ export async function run() {
         }
       }
 
-
       // Auto-replenish items (only applied once)
       let autoReplenish = applyAutoReplenishOnce(forecastMap, outputAutoReplenishAndForecast);
       console.log(drugDataMap, baseMap, autoReplenish);
+
       // 1. Combine all unique months
-
-      // --- Step 6: Final Output
-      // const finalRevenueForecast = Array.from(forecastMap.entries()).map(([month, revenue]) => [month, revenue]);
-
       const allMonths = new Set([
         ...drugDataMap.keys(),
         ...autoReplenish.keys(),
@@ -308,81 +293,76 @@ export async function run() {
       //AutoReplenish History
       let autoReplenishDatesAndData = getDatesAndData(finalRevenueForecast);
       const sheet = context.workbook.worksheets.getItem("AutoReplenishHistory");
-    //Get last column
-    const autoReplenishHistoryUsedRange = sheet.getUsedRange();
-  autoReplenishHistoryUsedRange.load(["columnIndex", "columnCount","rowCount"]);
-  await context.sync();
-        // Load row 2 headers (row index 1)
-    if(autoReplenishHistoryUsedRange.columnCount <=1) return //There is no data.
-    const headerRange = sheet.getRangeByIndexes(1, 1, 1, autoReplenishHistoryUsedRange.columnCount-1);
-    const datesRange = sheet.getRangeByIndexes(2,0,autoReplenishHistoryUsedRange.rowCount-2,1);
-    headerRange.load("values");
-    datesRange.load("values");
-    await context.sync();
-    console.log(datesRange.values)
-    const headers = headerRange.values[0] // Row 2
-    let currentMonth = formatDateWithDay(new Date());
-    let currentMonthPostion = headers.indexOf(currentMonth) 
-    let   datesInHistory = datesRange.values.map(x=>x[0]);
-    let beginningDateIndex = datesInHistory.indexOf(autoReplenishDatesAndData[0][0]);
-    console.log(currentMonth=headers[0])
-    await context.sync();
-    //Check if it exists in the headers
-    if(currentMonthPostion !== -1){ //it Exists
-      //Add data to the same column
-      sheet.getRangeByIndexes(2+beginningDateIndex,currentMonthPostion+1,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
-      sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[0]])
       
-    }
-    else{
-      //Add data to a new column(The last column) starting at index 1 
-      //Get the position in the dates column of the current starting date in the date array parameter
-      //Add dates to it and add the data from the index of that row
-      const currentMonthFormatted = formatDateWithDay(new Date());
-
-    sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).numberFormat = [["@"]]; // force text
-    sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).values = [[currentMonthFormatted]];
-    sheet.getRangeByIndexes(2+beginningDateIndex,autoReplenishHistoryUsedRange.columnCount,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
-    sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[0]])
-    }
+      //Get last column
+      const autoReplenishHistoryUsedRange = sheet.getUsedRange();
+      autoReplenishHistoryUsedRange.load(["columnIndex", "columnCount","rowCount"]);
+      await context.sync();
+      
+      // Load row 2 headers (row index 1)
+      if(autoReplenishHistoryUsedRange.columnCount <=1) return //There is no data.
+      
+      const headerRange = sheet.getRangeByIndexes(1, 1, 1, autoReplenishHistoryUsedRange.columnCount-1);
+      const datesRange = sheet.getRangeByIndexes(2,0,autoReplenishHistoryUsedRange.rowCount-2,1);
+      headerRange.load("values");
+      datesRange.load("values");
+      await context.sync();
+      
+      console.log("Dates in History:", datesRange.values);
+      const headers = headerRange.values[0] // Row 2
+      let currentMonth = formatDateWithDay(new Date());
+      let currentMonthPostion = headers.indexOf(currentMonth);
+      let datesInHistory = datesRange.values.map(x => x[0]);
+      
+      // Use normalized date comparison to find the correct starting row
+      let beginningDateIndex = findDateIndexInHistory(datesInHistory, autoReplenishDatesAndData[0][0]);
+      
+      console.log("Beginning Date Index:", beginningDateIndex);
+      console.log("Target Date:", autoReplenishDatesAndData[0][0]);
+      console.log("Current Month Position:", currentMonthPostion);
+      
+      await context.sync();
+      
+      //Check if it exists in the headers
+      if(currentMonthPostion !== -1){ //it Exists
+        //Add data to the same column
+        sheet.getRangeByIndexes(2+beginningDateIndex,currentMonthPostion+1,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
+        sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[0]])
+      }
+      else{
+        //Add data to a new column(The last column) starting at index 1 
+        const currentMonthFormatted = formatDateWithDay(new Date());
         
-    await context.sync();
-
+        sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).numberFormat = [["@"]]; // force text
+        sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).values = [[currentMonthFormatted]];
+        sheet.getRangeByIndexes(2+beginningDateIndex,autoReplenishHistoryUsedRange.columnCount,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
+        sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[0]])
+      }
       
-      // const BATCH_SIZE = 10000;
-
-      // for (let startRow = 0; startRow < outputAutoReplenishAndForecast.length; startRow += BATCH_SIZE) {
-      //     const chunk = outputAutoReplenishAndForecast.slice(startRow, startRow + BATCH_SIZE);
-          
-      //     wsAutoReplenishMedGroupsAndPredictions
-      //         .getRangeByIndexes(startRow, 0, chunk.length, chunk[0].length)
-      //         .values = chunk;
-      
-      //     await context.sync();
-      // }
-      
+      await context.sync();
       return context.sync();
     });
   } catch (error) {
     console.error(error);
   }
 }
+
 function getDatesAndData(foreCastData=[[]]){
   return foreCastData.map(
     x => [x[0],x[3]]
   )
 }
+
 function getBaseKitMap(baseKitRevenue) {
   const map = new Map();
 
-  const now = new Date();
-  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1); // First day of next month
+  const now = getCurrentMonthUTC(); // Use UTC for consistency
+  const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
 
   baseKitRevenue.forEach(([dateStr, kitQuantity, revenue]) => {
     const date = excelSerialDateToJSDate(dateStr);
-    console.log("Here we are")
     if (date >= nextMonth) {
-      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
       map.set(key, revenue);
     }
   });
@@ -390,32 +370,29 @@ function getBaseKitMap(baseKitRevenue) {
   return map;
 }
 
-
-// --- Step 2: Forecast structure (June 2023 → May 2033)
 function generateForecast(start = "2023-06", months = 120, baseMap = new Map()) {
   const forecast = new Map();
   const [startYear, startMonth] = start.split("-").map(Number);
-  const date = new Date(startYear, startMonth - 1);
+  const date = new Date(Date.UTC(startYear, startMonth - 1, 1)); // Use UTC
 
   for (let i = 0; i < months; i++) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
     const key = `${year}-${month}`;
     const baseRevenue = baseMap.get(key) || 0;
     forecast.set(key, baseRevenue);
-    date.setMonth(date.getMonth() + 1);
+    date.setUTCMonth(date.getUTCMonth() + 1);
   }
 
   return forecast;
 }
 
-// --- Step 3: Add drugData replenishment costs
 function applyDrugDataRevenue(forecastMap, drugData) {
   let drugDataMap = new Map();
   for (const row of drugData) {
     const total = parseFloat(row[4]);
     const replenishmentDates = row.slice(6);
-    // dynamically added dates
+    
     replenishmentDates.forEach((date) => {
       if (forecastMap.has(date)) {
         forecastMap.set(date, forecastMap.get(date) + total);
@@ -429,7 +406,6 @@ function applyDrugDataRevenue(forecastMap, drugData) {
   return drugDataMap;
 }
 
-// --- Step 4: Add Auto Replenish (just once, at expiration date)
 function applyAutoReplenishOnce(forecastMap, autoData) {
   let autoReplenish = new Map();
   autoData.forEach((row) => {
@@ -438,10 +414,12 @@ function applyAutoReplenishOnce(forecastMap, autoData) {
     if (status !== "Enabled") return;
     const price = typeof priceStr == "string" ? parseFloat(priceStr.replace("$", "")) : priceStr;
 
-    // const [expMonth, , expYear] = expDate.split("/").map(Number);
-    // const key = `${expYear}-${String(expMonth).padStart(2, '0')}`;
-    const date = new parseMonth(expDate);
-    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+    // Parse expiration date consistently
+    const date = parseMonthString(expDate);
+    if (!date) return;
+    
+    const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+    
     if (forecastMap.has(key)) {
       if (!isNaN(price)) {
         forecastMap.set(key, forecastMap.get(key) + price);
@@ -455,129 +433,125 @@ function applyAutoReplenishOnce(forecastMap, autoData) {
   return autoReplenish;
 }
 
-// // --- Step 5: Execute everything
-// const baseMap = getBaseKitMap(baseKitRevenue);
-// const forecastMap = generateForecast("2023-06", 120, baseMap);
+// ─── Helper Functions (Timezone Safe) ──────────────────────────────────────
 
-// // Plug in your generated updatedDrugData (with replenishment dates)
-// applyDrugDataRevenue(forecastMap, updatedDrugData);
+function excelSerialDateToJSDate(serial) {
+  // More robust Excel serial date conversion with UTC
+  if (!serial || isNaN(serial)) return new Date(NaN);
+  
+  const utcDays = Math.floor(serial - 25569);
+  const utcValue = utcDays * 86400;
+  const dateInfo = new Date(utcValue * 1000);
+  
+  // Return UTC date to avoid timezone shifts
+  return new Date(Date.UTC(
+    dateInfo.getUTCFullYear(),
+    dateInfo.getUTCMonth(),
+    dateInfo.getUTCDate()
+  ));
+}
 
-// // Auto-replenish items (only applied once)
-// applyAutoReplenishOnce(forecastMap, [
-//   ["42", "Dental Depot", "Insta-Glucose", "2/28/2026", "$10.85", "Enabled"],
-//   ["42", "Dental Depot", "Nitroglycerin Sublingual Tablets 0.4 mg", "5/31/2026", "$46.71", "Enabled"],
-//   ["42", "Dental Depot", "Albuterol Sulfate (60 doses)", "5/31/2026", "$79.61", "Enabled"],
-//   ["42", "Dental Depot", "Ammonia Towelette", "3/31/2027", "$14.08", "Enabled"],
-//   ["42", "Dental Depot", "Adrenaline 1 mg/mL", "6/30/2026", "$31.27", "Enabled"],
-//   ["42", "Dental Depot", "Adrenaline 1 mg/mL", "6/30/2026", "$31.27", "Enabled"],
-//   ["42", "Dental Depot", "Naloxone HCL 0.4 mg/mL", "4/30/2026", "$43.45", "Enabled"],
-// ]);
+function isPastMonth(inputDate) {
+  const today = getCurrentMonthUTC();
+  
+  const currentYear = today.getUTCFullYear();
+  const currentMonth = today.getUTCMonth() + 1;
 
-// // --- Step 6: Final Output
-// const finalRevenueForecast = Array.from(forecastMap.entries()).map(([month, revenue]) => [month, revenue]);
-// console.table(finalRevenueForecast);
+  let year, month;
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
-function parseMonth(ym) {
-  // More robust parsing of YYYY-MM strings
-  const [y, m] = ym.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, 1));
-}
-// Instead of using new Date() directly:
-function getCurrentMonthUTC() {
-  const now = new Date();
-  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), 1));
-}
-function formatMonth(dt) {
-  const y = dt.getUTCFullYear(),
-    m = String(dt.getUTCMonth() + 1).padStart(2, "0");
-  return `${y}-${m}`;
-}
-function addDays(dt, n) {
-  return new Date(dt.valueOf() + n * 864e5);
-}
-function addMonths(dt, n) {
-  const y = dt.getUTCFullYear(),
-    mo = dt.getUTCMonth() + n;
-  return new Date(Date.UTC(y + Math.floor(mo / 12), mo % 12, 1));
-}
-function generateProjections(start, end, perMonth) {
-  const result = {};
-  let cur = parseMonth(start),
-    last = parseMonth(end);
-  while (cur <= last) {
-    result[formatMonth(cur)] = perMonth;
-    cur = addMonths(cur, 1);
+  if (inputDate instanceof Date) {
+    year = inputDate.getUTCFullYear();
+    month = inputDate.getUTCMonth() + 1;
+  } else if (typeof inputDate === "string") {
+    [year, month] = inputDate.split("-").map(Number);
+  } else {
+    return false;
   }
-  return result;
+
+  return (currentYear > year || (currentYear === year && currentMonth > month));
 }
+
 function formatDate(date) {
   // Always use UTC to avoid timezone issues
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   return `${year}-${month}`;
 }
+
 function formatDateWithDay(date) {
   // Always use UTC to avoid timezone issues
   const year = date.getUTCFullYear();
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
-  const day = date.getUTCDate()
+  const day = String(date.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
-function excelSerialDateToJSDate(serial) {
-  // UTC-based conversion to avoid timezone issues
-  const utcDays = Math.floor(serial - 25569); // 25569 = days between 1900 and 1970
-  const utcValue = utcDays * 86400; // 86400 = seconds per day
-  const dateInfo = new Date(utcValue * 1000);
-  
-  // Create a new date using UTC values to avoid timezone offset
-  return new Date(Date.UTC(
-      dateInfo.getUTCFullYear(),
-      dateInfo.getUTCMonth(),
-      dateInfo.getUTCDate()
-  ));
-}
-/**
- * @param {Array} headers - List of dates structures as month-year
- * 
- */
-function getAutoReplenishmentHistoryColumn(headers){
-  let currentDate = new Date();
-  let dateStr= formatDate(currentDate);
-  //Check the headers of the sheet to see if the date already exists
 
-  let index =  headers.indexOf(dateStr);
-  return index
+function formatMonth(dt) {
+  const y = dt.getUTCFullYear(),
+    m = String(dt.getUTCMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
 }
-// ─── run it ────────────────────────────────────────────────────────────────
-async function insertOrReplaceDataByHeader(dates, Data =[300,800]) {
-  await Excel.run(async (context) => {
-    const sheet = context.workbook.worksheets.getItem("AutoReplenishHistory");
-    //Get last column
-    const usedRange = sheet.getUsedRange();
-  usedRange.load(["columnIndex", "columnCount"]);
-  await context.sync();
-        // Load row 2 headers (row index 1)
-        if(usedRange.columnCount <=1) return //There is no data.
-    const headerRange = sheet.getRangeByIndexes(1, 1, 1, usedRange.columnCount-1);
-    headerRange.load("values");
-    await context.sync();
-    console.log(headerRange.values)
-    const headers = headerRange.values[0] // Row 2
-    let currentMonth = formatDate(getCurrentMonthUTC());
-    let currentMonthPostion = headers.indexOf(currentMonth) 
-    console.log(currentMonth=headers[0])
-    //Check if it exists in the headers
-    if(currentMonthPostion !== -1){ //it Exists
-      //Add data to the same column
-      console.log(Data.map(x=>[x]))
-      sheet.getRangeByIndexes(2,currentMonthPostion+1,Data.length,1).values = Data.map(x=>[x])
+
+function addDays(dt, n) {
+  // Use UTC to avoid DST issues
+  const result = new Date(dt);
+  result.setUTCDate(result.getUTCDate() + n);
+  return result;
+}
+
+function getCurrentMonthUTC() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+}
+
+function parseMonthString(ym) {
+  // Robust parsing of various date formats
+  if (!ym || ym === "N/A") return new Date(NaN);
+  
+  try {
+    // Handle "YYYY-MM" format
+    if (/^\d{4}-\d{2}$/.test(ym)) {
+      const [y, m] = ym.split("-").map(Number);
+      return new Date(Date.UTC(y, m - 1, 1));
     }
-    else{
-      //Add data to a new column(The last column) starting at index 1 
-      //Get the position in the dates column of the current starting date in the date array parameter
-      //Add dates to it and add the data from the index of that row
+    
+    // Handle "MM/DD/YYYY" or other formats
+    const parsed = new Date(ym);
+    if (isNaN(parsed.getTime())) return new Date(NaN);
+    
+    // Convert to UTC first day of month
+    return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), 1));
+  } catch (e) {
+    return new Date(NaN);
+  }
+}
+
+function findDateIndexInHistory(datesInHistory, targetDate) {
+  // Normalize both dates for comparison
+  const normalizedTarget = normalizeDateForComparison(targetDate);
+  
+  for (let i = 0; i < datesInHistory.length; i++) {
+    const normalizedHistory = normalizeDateForComparison(datesInHistory[i]);
+    if (normalizedTarget.getTime() === normalizedHistory.getTime()) {
+      return i;
     }
-        await context.sync();
-  });
+  }
+  
+  console.warn("Target date not found in history, using index 0");
+  return 0;
+}
+
+function normalizeDateForComparison(dateStr) {
+  // Handle both "YYYY-MM" and "YYYY-MM-DD" formats
+  const parts = dateStr.split('-');
+  const year = parseInt(parts[0]);
+  const month = parseInt(parts[1]);
+  
+  // Always return the first day of month in UTC for consistent comparison
+  return new Date(Date.UTC(year, month - 1, 1));
+}
+
+// Legacy function kept for compatibility
+function parseMonth(ym) {
+  return parseMonthString(ym);
 }
