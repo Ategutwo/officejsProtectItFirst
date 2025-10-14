@@ -269,16 +269,54 @@ export async function run() {
         ...forecastMap.keys(),
       ]);
 
-      // 2. Generate final forecast array
+      // 2. Generate final forecast array with Non-Auto Replenishment column
       const finalRevenueForecast = [];
+      const currentMonth = getCurrentMonthUTC();
+      const currentMonthKey = formatMonth(currentMonth);
+      // Get the percentage from Non-Auto Replenish sheet
+      let nonAutoReplenishSheet;
+      let nonAutoPercentage = 0.25; // Default to 25%
+      
+      try {
+        nonAutoReplenishSheet = context.workbook.worksheets.getItem("Non-Auto Replenish");
+        const g2Range = nonAutoReplenishSheet.getRange("G2");
+        const h2Range = nonAutoReplenishSheet.getRange("H2");
+        
+        g2Range.load("values");
+        h2Range.load("values");
+        await context.sync();
+        
+        // Use H2 if not empty, otherwise use G2
+        if (h2Range.values[0][0] !== null && h2Range.values[0][0] !== "" && !isNaN(h2Range.values[0][0])) {
+          nonAutoPercentage = parseFloat(h2Range.values[0][0]);
+        } else if (g2Range.values[0][0] !== null && g2Range.values[0][0] !== "" && !isNaN(g2Range.values[0][0])) {
+          nonAutoPercentage = parseFloat(g2Range.values[0][0]);
+        }
+        
+        console.log("Using Non-Auto Replenishment percentage:", nonAutoPercentage);
+      } catch (error) {
+        console.log("Non-Auto Replenish sheet not found or error reading values, using default 25%");
+      }
 
       for (const month of [...allMonths].sort()) {
         const newkit = baseMap.get(month) || 0;
         const auto = autoReplenish.get(month) || 0;
         const drugData = drugDataMap.get(month) || 0;
-        const totalRevenue = newkit + auto + drugData;
+        
+        // Calculate Non-Auto Replenishment (25% of Auto Replenish, only for future months)
+        const nonAutoReplenishment = (month > currentMonthKey) ? auto * nonAutoPercentage : 0;
+        
+        // Update total revenue to include non-auto replenishment
+        const totalRevenue = newkit + auto + drugData + nonAutoReplenishment;
 
-        finalRevenueForecast.push([month, totalRevenue, newkit, auto, drugData]);
+        finalRevenueForecast.push([
+          month, 
+          totalRevenue, 
+          newkit, 
+          auto, 
+          drugData,
+          nonAutoReplenishment  // New column: Non-Auto Replenishment
+        ]);
       }
 
       wsRevenuePredictions.getRangeByIndexes(
@@ -310,8 +348,8 @@ export async function run() {
       
       console.log("Dates in History:", datesRange.values);
       const headers = headerRange.values[0] // Row 2
-      let currentMonth = formatDateWithDay(new Date());
-      let currentMonthPostion = headers.indexOf(currentMonth);
+      let currentMonthFormatted = formatDateWithDay(new Date());
+      let currentMonthPostion = headers.indexOf(currentMonthFormatted);
       let datesInHistory = datesRange.values.map(x => x[0]);
       
       // Use normalized date comparison to find the correct starting row
@@ -331,7 +369,6 @@ export async function run() {
       }
       else{
         //Add data to a new column(The last column) starting at index 1 
-        const currentMonthFormatted = formatDateWithDay(new Date());
         
         sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).numberFormat = [["@"]]; // force text
         sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).values = [[currentMonthFormatted]];
