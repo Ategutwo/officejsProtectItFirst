@@ -27,7 +27,8 @@ export async function run() {
       );
       let wsRevenuePredictions = context.workbook.worksheets.getItem("Revenue Prediction");
       
-      wsRevenuePredictions.getRangeByIndexes(1, 0, 10000, 50).clear(Excel.ClearApplyTo.contents);
+      // Clear only up to column J to preserve discount in column L
+      wsRevenuePredictions.getRangeByIndexes(1, 0, 10000, 10).clear(Excel.ClearApplyTo.contents);
       drugsExpirationPredictions
         .getRangeByIndexes(1, 0, 10000, 50)
         .clear(Excel.ClearApplyTo.contents);
@@ -83,35 +84,65 @@ export async function run() {
       let newKitData = dataRange.values;
       let salesHistory = {};
       
-      //Get the Kit Revenue for each Kit and total Revenue
+      // Get discount percentage from L2
+      let discountPercentage = 0;
+      try {
+        const discountRange = wsNewKit.getRange("L2");
+        discountRange.load("values");
+        await context.sync();
+        
+        if (discountRange.values[0][0] !== null && discountRange.values[0][0] !== "" && !isNaN(discountRange.values[0][0])) {
+          discountPercentage = parseFloat(discountRange.values[0][0]);
+          console.log("Using discount percentage:", discountPercentage);
+        }
+      } catch (error) {
+        console.log("Error reading discount from L2, using 0% discount");
+      }
+      
+      //Get the Kit Revenue for each Kit and total Revenue with discount applied
       let calculatedKitData = newKitData.map((row) => {
         let currentMonthKey = formatDate(excelSerialDateToJSDate(row[0]))
         if(!isPastMonth(currentMonthKey)){
           salesHistory[currentMonthKey] = row[1];
         }
         let numberOfKits = row[1];
-        let EMK1 =
+        
+        // Calculate base prices
+        let EMK1_base =
           Math.floor(emkDetails["EMK1"].newKitShares * numberOfKits) *
           emkDetails["EMK1"].retailPrice;
-        let EMK5 =
+        let EMK5_base =
           Math.floor(emkDetails["EMK5"].newKitShares * numberOfKits) *
           emkDetails["EMK5"].retailPrice;
-        let EMK10 =
+        let EMK10_base =
           Math.floor(emkDetails["EMK10"].newKitShares * numberOfKits) *
           emkDetails["EMK10"].retailPrice;
-        let EMK15 =
+        let EMK15_base =
           Math.floor(emkDetails["EMK15"].newKitShares * numberOfKits) *
           emkDetails["EMK15"].retailPrice;
-        let EMK1Mini =
+        let EMK1Mini_base =
           Math.floor(emkDetails["EMK1-Mini"].newKitShares * numberOfKits) *
           emkDetails["EMK1-Mini"].retailPrice;
-        let EMK10Mini =
+        let EMK10Mini_base =
           Math.floor(emkDetails["EMK10-Mini"].newKitShares * numberOfKits) *
           emkDetails["EMK10-Mini"].retailPrice;
+        
+        // Apply discount to total revenue
+        let totalBaseRevenue = EMK1_base + EMK5_base + EMK10_base + EMK15_base + EMK1Mini_base + EMK10Mini_base;
+        let totalDiscountedRevenue = totalBaseRevenue * (1 - discountPercentage);
+        
+        // Apply discount to individual kit revenues
+        let EMK1 = EMK1_base * (1 - discountPercentage);
+        let EMK5 = EMK5_base * (1 - discountPercentage);
+        let EMK10 = EMK10_base * (1 - discountPercentage);
+        let EMK15 = EMK15_base * (1 - discountPercentage);
+        let EMK1Mini = EMK1Mini_base * (1 - discountPercentage);
+        let EMK10Mini = EMK10Mini_base * (1 - discountPercentage);
+        
         return [
           row[0],
           row[1],
-          EMK1 + EMK5 + EMK10 + EMK15 + EMK1Mini + EMK10Mini,
+          totalDiscountedRevenue,
           "",
           EMK1,
           EMK5,
@@ -122,7 +153,7 @@ export async function run() {
         ];
       });
       
-      //Add the Kit Revenue to the sheet
+      //Add the Kit Revenue to the sheet (only up to column J to preserve discount in L)
       wsNewKit.getRange("A2:J" + (calculatedKitData.length + 1)).values = calculatedKitData;
       
       //Get the drugs that belong to each Kit
@@ -404,10 +435,6 @@ export async function run() {
     console.error(error);
   }
 }
-
-
-
-// ... rest of the helper functions remain exactly the same ...
 
 function getDatesAndData(foreCastData=[[]]){
   return foreCastData.map(
