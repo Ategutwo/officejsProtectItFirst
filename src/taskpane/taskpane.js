@@ -298,6 +298,23 @@ export async function run() {
         console.log("Non-Auto Replenish sheet not found or error reading values, using default 25%");
       }
 
+      // Get AED sales value
+      let aedSalesValue = 0;
+      try {
+        const aedSalesSheet = context.workbook.worksheets.getItem("AED Sales");
+        const aedSalesRange = aedSalesSheet.getRange("G2");
+        aedSalesRange.load("values");
+        await context.sync();
+        
+        if (aedSalesRange.values[0][0] !== null && aedSalesRange.values[0][0] !== "" && !isNaN(aedSalesRange.values[0][0])) {
+          aedSalesValue = parseFloat(aedSalesRange.values[0][0]);
+        }
+        
+        console.log("Using AED Sales value:", aedSalesValue);
+      } catch (error) {
+        console.log("AED Sales sheet not found or error reading G2 value, using 0");
+      }
+
       for (const month of [...allMonths].sort()) {
         const newkit = baseMap.get(month) || 0;
         const auto = autoReplenish.get(month) || 0;
@@ -306,8 +323,11 @@ export async function run() {
         // Calculate Non-Auto Replenishment (25% of Auto Replenish, only for future months)
         const nonAutoReplenishment = (month > currentMonthKey) ? auto * nonAutoPercentage : 0;
         
-        // Update total revenue to include non-auto replenishment
-        const totalRevenue = newkit + auto + drugData + nonAutoReplenishment;
+        // Calculate AED Sales (only for future months)
+        const aedSales = (month > currentMonthKey) ? aedSalesValue : 0;
+        
+        // Update total revenue to include non-auto replenishment and AED sales
+        const totalRevenue = newkit + auto + drugData + nonAutoReplenishment + aedSales;
 
         finalRevenueForecast.push([
           month, 
@@ -315,7 +335,8 @@ export async function run() {
           newkit, 
           auto, 
           drugData,
-          nonAutoReplenishment  // New column: Non-Auto Replenishment
+          nonAutoReplenishment,  // New column: Non-Auto Replenishment
+          aedSales               // New column: AED sales
         ]);
       }
 
@@ -383,6 +404,10 @@ export async function run() {
     console.error(error);
   }
 }
+
+
+
+// ... rest of the helper functions remain exactly the same ...
 
 function getDatesAndData(foreCastData=[[]]){
   return foreCastData.map(
