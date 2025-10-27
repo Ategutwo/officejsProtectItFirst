@@ -27,19 +27,31 @@ export async function run() {
       );
       let wsRevenuePredictions = context.workbook.worksheets.getItem("Revenue Prediction");
       
-      // Get yearly increase percentage
-      let yearlyIncreasePercentage = 0;
+      // Get monthly increase data from "Yearly Med Increase" sheet
+      let monthlyIncreaseMap = new Map();
       try {
-        const yearlyIncreaseRange = ws.getRange("R2"); // You can change this cell reference as needed
-        yearlyIncreaseRange.load("values");
+        const yearlyIncreaseSheet = context.workbook.worksheets.getItem("Yearly Med Increase");
+        const usedRangeIncrease = yearlyIncreaseSheet.getUsedRange();
+        usedRangeIncrease.load("rowCount");
         await context.sync();
         
-        if (yearlyIncreaseRange.values[0][0] !== null && yearlyIncreaseRange.values[0][0] !== "" && !isNaN(yearlyIncreaseRange.values[0][0])) {
-          yearlyIncreasePercentage = parseFloat(yearlyIncreaseRange.values[0][0]);
-          console.log("Using yearly increase percentage:", yearlyIncreasePercentage);
+        if (usedRangeIncrease.rowCount > 1) {
+          const increaseDataRange = yearlyIncreaseSheet.getRange(`A2:B${usedRangeIncrease.rowCount}`);
+          increaseDataRange.load("values");
+          await context.sync();
+          
+          increaseDataRange.values.forEach(row => {
+            if (row[0] && row[1] !== null && row[1] !== "" && !isNaN(row[1])) {
+              const date = excelSerialDateToJSDate(row[0]);
+              const monthKey = formatDate(date);
+              //Percentage Increase Area
+              monthlyIncreaseMap.set(monthKey, parseFloat(row[1]));
+            }
+          });
+          console.log("Monthly increase data loaded:", monthlyIncreaseMap);
         }
       } catch (error) {
-        console.log("No yearly increase percentage found, using 0%");
+        console.log("Yearly Med Increase sheet not found or error reading data, using no increases");
       }
       
       // Clear only up to column J to preserve discount in column L
@@ -68,7 +80,7 @@ export async function run() {
           laCarte: row[4],
           includedInPackages: [],
           shelfLife: row[7],
-          basePrice: row[4] // Store base price for yearly increases
+          basePrice: row[4] // Store base price for monthly increases
         };
         for (let i = 8; i <= 13; i++) {
           if (row[i].toString().trim() !== "") {
@@ -84,7 +96,7 @@ export async function run() {
           newKitShares: row[2],
           purchasePrice: row[3],
           drugs: [],
-          baseRetailPrice: row[1] // Store base price for yearly increases
+          baseRetailPrice: row[1] // Store base price for monthly increases
         };
       });
       console.log(medsObj,"Meds Object")
@@ -116,18 +128,32 @@ export async function run() {
         console.log("Error reading discount from L2, using 0% discount");
       }
       
-      // Function to apply yearly price increases
-      const getAdjustedPrice = (basePrice, date, yearlyIncrease) => {
-        if (yearlyIncrease <= 0) return basePrice;
+      // Function to apply monthly price increases cumulatively
+      const getAdjustedPrice = (basePrice, targetDate, increaseMap) => {
+        if (increaseMap.size === 0) return basePrice;
         
-        const currentYear = new Date().getFullYear();
-        const targetYear = date.getFullYear();
-        const yearsDifference = Math.max(0, targetYear - currentYear);
+        const currentDate = new Date();
+        const targetMonthKey = formatDate(targetDate);
         
-        if (yearsDifference === 0) return basePrice;
+        // If target date is before current date, no increases applied
+        if (targetDate < currentDate) return basePrice;
         
-        // Apply compound interest: price * (1 + rate)^years
-        return basePrice * Math.pow(1 + yearlyIncrease, yearsDifference);
+        // Sort all increase months chronologically
+        const sortedIncreaseMonths = Array.from(increaseMap.keys()).sort();
+        
+        let adjustedPrice = basePrice;
+        let cumulativeIncrease = 1;
+        
+        // Apply all increases that occur before or in the target month
+        for (const increaseMonth of sortedIncreaseMonths) {
+          if (increaseMonth <= targetMonthKey) {
+            const increaseRate = increaseMap.get(increaseMonth);
+            cumulativeIncrease *= (1 + increaseRate);
+          }
+        }
+        
+        adjustedPrice = basePrice * cumulativeIncrease;
+        return adjustedPrice;
       };
       
       //Get the Kit Revenue for each Kit and total Revenue with discount applied
@@ -139,13 +165,13 @@ export async function run() {
         let numberOfKits = row[1];
         const rowDate = excelSerialDateToJSDate(row[0]);
         
-        // Calculate base prices with yearly increases applied
-        let EMK1_base_retail = getAdjustedPrice(emkDetails["EMK1"].baseRetailPrice, rowDate, yearlyIncreasePercentage);
-        let EMK5_base_retail = getAdjustedPrice(emkDetails["EMK5"].baseRetailPrice, rowDate, yearlyIncreasePercentage);
-        let EMK10_base_retail = getAdjustedPrice(emkDetails["EMK10"].baseRetailPrice, rowDate, yearlyIncreasePercentage);
-        let EMK15_base_retail = getAdjustedPrice(emkDetails["EMK15"].baseRetailPrice, rowDate, yearlyIncreasePercentage);
-        let EMK1Mini_base_retail = getAdjustedPrice(emkDetails["EMK1-Mini"].baseRetailPrice, rowDate, yearlyIncreasePercentage);
-        let EMK10Mini_base_retail = getAdjustedPrice(emkDetails["EMK10-Mini"].baseRetailPrice, rowDate, yearlyIncreasePercentage);
+        // Calculate base prices with monthly increases applied
+        let EMK1_base_retail = getAdjustedPrice(emkDetails["EMK1"].baseRetailPrice, rowDate, monthlyIncreaseMap);
+        let EMK5_base_retail = getAdjustedPrice(emkDetails["EMK5"].baseRetailPrice, rowDate, monthlyIncreaseMap);
+        let EMK10_base_retail = getAdjustedPrice(emkDetails["EMK10"].baseRetailPrice, rowDate, monthlyIncreaseMap);
+        let EMK15_base_retail = getAdjustedPrice(emkDetails["EMK15"].baseRetailPrice, rowDate, monthlyIncreaseMap);
+        let EMK1Mini_base_retail = getAdjustedPrice(emkDetails["EMK1-Mini"].baseRetailPrice, rowDate, monthlyIncreaseMap);
+        let EMK10Mini_base_retail = getAdjustedPrice(emkDetails["EMK10-Mini"].baseRetailPrice, rowDate, monthlyIncreaseMap);
         
         let EMK1_base =
           Math.floor(emkDetails["EMK1"].newKitShares * numberOfKits) *
@@ -205,7 +231,7 @@ export async function run() {
         row[13] === "X" ? emkDetails["EMK10-Mini"]["drugs"].push(row[0]) : "";
       });
       
-      //Creating calculation for all drugs per month with yearly price increases
+      //Creating calculation for all drugs per month with monthly price increases
       let newKitDrugPredictions = [];
       Object.keys(salesHistory).forEach((month) => {
         let totalKitAmount = salesHistory[month];
@@ -215,9 +241,9 @@ export async function run() {
           emkDetails[kit].drugs.forEach((drug) => {
             if (medsObj[drug].shelfLife == "" || medsObj[drug].shelfLife == "N/A") return;
             
-            // Apply yearly increase to drug price
+            // Apply monthly increase to drug price
             const drugDate = parseMonthString(month);
-            const adjustedDrugPrice = getAdjustedPrice(medsObj[drug].basePrice, drugDate, yearlyIncreasePercentage);
+            const adjustedDrugPrice = getAdjustedPrice(medsObj[drug].basePrice, drugDate, monthlyIncreaseMap);
             
             newKitDrugPredictions.push([
               month,
@@ -280,7 +306,7 @@ export async function run() {
       rangeAutoReplenishMedGroupsAll.load("values");
       await context.sync();
       
-      //Add the Future expiration dates for the auto replenishments with yearly price increases
+      //Add the Future expiration dates for the auto replenishments with monthly price increases
       const outputAutoReplenishAndForecast = [
         [
           "Group",
@@ -301,8 +327,8 @@ export async function run() {
         const config = medsObj[medication];
         const baseDate = excelSerialDateToJSDate(expirationStr);
 
-        // Apply yearly increase to the base price
-        const adjustedPrice = baseDate ? getAdjustedPrice(price, baseDate, yearlyIncreasePercentage) : price;
+        // Apply monthly increase to the base price
+        const adjustedPrice = baseDate ? getAdjustedPrice(price, baseDate, monthlyIncreaseMap) : price;
 
         // Always include original
         outputAutoReplenishAndForecast.push([
@@ -323,7 +349,7 @@ export async function run() {
 
         for (let i = 1; i <= 20; i++) {
           const futureDate = addDays(baseDate, shelfLife * i);
-          const futureAdjustedPrice = getAdjustedPrice(price, futureDate, yearlyIncreasePercentage);
+          const futureAdjustedPrice = getAdjustedPrice(price, futureDate, monthlyIncreaseMap);
           
           outputAutoReplenishAndForecast.push([
             group,
@@ -484,6 +510,11 @@ export async function run() {
     console.error(error);
   }
 }
+
+// ... (all the helper functions remain exactly the same as in your original code)
+// getDatesAndData, getBaseKitMap, generateForecast, applyDrugDataRevenue, applyAutoReplenishOnce,
+// excelSerialDateToJSDate, isPastMonth, formatDate, formatDateWithDay, formatMonth, addDays,
+// getCurrentMonthUTC, parseMonthString, findDateIndexInHistory, normalizeDateForComparison, parseMonth
 
 function getDatesAndData(foreCastData=[[]]){
   return foreCastData.map(
