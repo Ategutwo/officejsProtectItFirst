@@ -27,6 +27,34 @@ export async function run() {
       );
       let wsRevenuePredictions = context.workbook.worksheets.getItem("Revenue Prediction");
       
+      // Get AED Details sheet data
+      let wsAEDDetails = context.workbook.worksheets.getItem("AED_Details(main)");
+      let aedUsedRange = wsAEDDetails.getUsedRange();
+      aedUsedRange.load(["rowIndex", "rowCount"]);
+      await context.sync();
+      let aedLastRow = aedUsedRange.rowIndex;
+      let aedDataRange = wsAEDDetails.getRange(`A2:I${aedLastRow + 1}`);
+      aedDataRange.load("values");
+      await context.sync();
+      
+      // Create AED details object - use the AED Accessories name as key
+      let aedMedsObj = {};
+      aedDataRange.values.forEach((row) => {
+        if (row[1] && row[1].toString().trim() !== "") {
+          aedMedsObj[row[1].trim()] = {
+            itemName: row[1],
+            units: row[2],
+            unitCost: row[3],
+            totalUnitCost: row[4],
+            laCarte: row[5],
+            shelfLife: row[8],
+            basePrice: row[5] // Store base price for monthly increases
+          };
+        }
+      });
+      
+      console.log("AED Items loaded:", Object.keys(aedMedsObj));
+      
       // Get monthly increase data from "Yearly Med Increase" sheet
       let monthlyIncreaseMap = new Map();
       try {
@@ -55,7 +83,7 @@ export async function run() {
       }
       
       // Clear only up to column J to preserve discount in column L
-      wsRevenuePredictions.getRangeByIndexes(1, 0, 10000, 10).clear(Excel.ClearApplyTo.contents);
+      wsRevenuePredictions.getRangeByIndexes(1, 0, 10000, 12).clear(Excel.ClearApplyTo.contents);
       drugsExpirationPredictions
         .getRangeByIndexes(1, 0, 10000, 50)
         .clear(Excel.ClearApplyTo.contents);
@@ -83,7 +111,7 @@ export async function run() {
           basePrice: row[4] // Store base price for monthly increases
         };
         for (let i = 8; i <= 13; i++) {
-          if (row[i].toString().trim() !== "") {
+          if (row[i] && row[i].toString().trim() !== "") {
             medsObj[row[0]].includedInPackages.push(data.values[0][i]);
           }
         }
@@ -99,7 +127,6 @@ export async function run() {
           baseRetailPrice: row[1] // Store base price for monthly increases
         };
       });
-      console.log(medsObj,"Meds Object")
 
       //Get the New Kit Data
       let wsNewKit = context.workbook.worksheets.getItem("New Kit Data");
@@ -330,7 +357,7 @@ export async function run() {
         // Apply monthly increase to the base price
         const adjustedPrice = baseDate ? getAdjustedPrice(price, baseDate, monthlyIncreaseMap) : price;
 
-        // Always include original
+        // Always include original (keep existing records even if no shelf life)
         outputAutoReplenishAndForecast.push([
           group,
           company,
@@ -341,11 +368,13 @@ export async function run() {
           "",
         ]);
 
-        if (!config || !baseDate){ 
+        // Only create future replenishments if shelf life exists and is valid
+        if (!config || !baseDate || !config.shelfLife || config.shelfLife === "" || config.shelfLife === "N/A" || isNaN(config.shelfLife)){ 
           continue
         };
 
-        const { shelfLife } = config;
+        const shelfLife = parseInt(config.shelfLife);
+        if (shelfLife <= 0) continue;
 
         for (let i = 1; i <= 20; i++) {
           const futureDate = addDays(baseDate, shelfLife * i);
@@ -363,22 +392,111 @@ export async function run() {
         }
       }
 
-      // Auto-replenish items (only applied once)
+      // Get AED Auto Replenish groups data
+      let wsAutoReplenishAEDGroups = context.workbook.worksheets.getItem("auto_replenish_aed_groups");
+      let usedRangeAutoReplenishAEDGroups = wsAutoReplenishAEDGroups.getUsedRange();
+      let lastRowAutoReplenishAEDGroups = usedRangeAutoReplenishAEDGroups.getLastRow();
+      lastRowAutoReplenishAEDGroups.load("rowIndex");
+      await context.sync();
+      
+      let rangeAutoReplenishAEDGroupsAll = wsAutoReplenishAEDGroups.getRangeByIndexes(
+        2,
+        0,
+        lastRowAutoReplenishAEDGroups.rowIndex - 1,
+        6
+      );
+      rangeAutoReplenishAEDGroupsAll.load("values");
+      await context.sync();
+      
+      console.log("AED Auto Replenish data:", rangeAutoReplenishAEDGroupsAll.values);
+      
+      // Add AED Auto Replenish data with monthly price increases
+      const outputAEDAutoReplenishAndForecast = [
+        [
+          "Group",
+          "Company",
+          "AED Item",
+          "Expiration",
+          "Price",
+          "Auto Replenish",
+          "Generated Dates",
+        ],
+      ];
+
+      for (const row of rangeAutoReplenishAEDGroupsAll.values) {
+        const [group, company, aedItem, expirationStr, price, autoReplenish] = row;
+
+        if (autoReplenish !== "Enabled") continue;
+
+        // Clean up the AED item name to match the AED_Details sheet
+        const cleanAEDItem = aedItem ? aedItem.toString().trim() : '';
+        
+        const config = aedMedsObj[cleanAEDItem];
+        const baseDate = expirationStr && expirationStr !== "N/A" && expirationStr !== "" 
+          ? excelSerialDateToJSDate(expirationStr) 
+          : null;
+
+        // Apply monthly increase to the base price
+        const adjustedPrice = baseDate ? getAdjustedPrice(price, baseDate, monthlyIncreaseMap) : price;
+
+        // Always include original (keep existing records even if no shelf life or expiration)
+        outputAEDAutoReplenishAndForecast.push([
+          group,
+          company,
+          cleanAEDItem,
+          baseDate ? formatMonth(baseDate) : "N/A",
+          adjustedPrice,
+          autoReplenish,
+          "",
+        ]);
+
+        // Only create future replenishments if we have valid expiration date AND shelf life
+        if (!baseDate || !config || !config.shelfLife || config.shelfLife === "" || config.shelfLife === "N/A" || isNaN(config.shelfLife)){ 
+          continue
+        };
+
+        const shelfLife = parseInt(config.shelfLife);
+        if (shelfLife <= 0) continue;
+
+        for (let i = 1; i <= 20; i++) {
+          const futureDate = addDays(baseDate, shelfLife * i);
+          const futureAdjustedPrice = getAdjustedPrice(price, futureDate, monthlyIncreaseMap);
+          
+          outputAEDAutoReplenishAndForecast.push([
+            group,
+            company,
+            cleanAEDItem,
+            formatMonth(futureDate),
+            parseFloat(futureAdjustedPrice.toFixed(2)),
+            autoReplenish,
+            "Generated",
+          ]);
+        }
+      }
+
+      console.log("AED Auto Replenish processed items:", outputAEDAutoReplenishAndForecast.length);
+
+      // Auto-replenish items (only applied once) - Keep separate for different columns
       let autoReplenish = applyAutoReplenishOnce(forecastMap, outputAutoReplenishAndForecast);
-      console.log(drugDataMap, baseMap, autoReplenish);
+      let aedAutoReplenish = applyAutoReplenishOnce(forecastMap, outputAEDAutoReplenishAndForecast);
+      
+      console.log("Regular Auto Replenish:", autoReplenish);
+      console.log("AED Auto Replenish:", aedAutoReplenish);
 
       // 1. Combine all unique months
       const allMonths = new Set([
         ...drugDataMap.keys(),
         ...autoReplenish.keys(),
+        ...aedAutoReplenish.keys(),
         ...baseMap.keys(),
         ...forecastMap.keys(),
       ]);
 
-      // 2. Generate final forecast array with Non-Auto Replenishment column
+      // 2. Generate final forecast array with separate AED Auto Replenish column
       const finalRevenueForecast = [];
       const currentMonth = getCurrentMonthUTC();
       const currentMonthKey = formatMonth(currentMonth);
+      
       // Get the percentage from Non-Auto Replenish sheet
       let nonAutoReplenishSheet;
       let nonAutoPercentage = 0.25; // Default to 25%
@@ -421,9 +539,13 @@ export async function run() {
         console.log("AED Sales sheet not found or error reading G2 value, using 0");
       }
 
-      for (const month of [...allMonths].sort()) {
+      // Sort months chronologically
+      const sortedMonths = [...allMonths].sort();
+      
+      for (const month of sortedMonths) {
         const newkit = baseMap.get(month) || 0;
         const auto = autoReplenish.get(month) || 0;
+        const aedAuto = aedAutoReplenish.get(month) || 0;
         const drugData = drugDataMap.get(month) || 0;
         
         // Calculate Non-Auto Replenishment (25% of Auto Replenish, only for future months)
@@ -432,8 +554,8 @@ export async function run() {
         // Calculate AED Sales (only for future months)
         const aedSales = (month > currentMonthKey) ? aedSalesValue : 0;
         
-        // Update total revenue to include non-auto replenishment and AED sales
-        const totalRevenue = newkit + auto + drugData + nonAutoReplenishment + aedSales;
+        // Update total revenue to include all components
+        const totalRevenue = newkit + auto + aedAuto + drugData + nonAutoReplenishment + aedSales;
 
         finalRevenueForecast.push([
           month, 
@@ -441,22 +563,43 @@ export async function run() {
           newkit, 
           auto, 
           drugData,
-          nonAutoReplenishment,  // New column: Non-Auto Replenishment
-          aedSales               // New column: AED sales
+          nonAutoReplenishment,
+          aedSales,
+          aedAuto  // Column H: AED Auto Replenish
         ]);
       }
 
+      // Update the range to include column H
       wsRevenuePredictions.getRangeByIndexes(
         1,
         0,
         finalRevenueForecast.length,
         finalRevenueForecast[0].length
       ).values = finalRevenueForecast;
+      
+      // Add headers
+      const headers = [
+        "Month", 
+        "Total Revenue", 
+        "New Kit Revenue", 
+        "Auto Replenish", 
+        "Drug Data Revenue",
+        "Non-Auto Replenishment",
+        "AED Sales",
+        "AED Auto Replenish"
+      ];
+      wsRevenuePredictions.getRangeByIndexes(0, 0, 1, headers.length).values = [headers];
+      
       await context.sync();
+      console.log("Final Revenue Forecast:", finalRevenueForecast);
       console.table(finalRevenueForecast);
 
-      //AutoReplenish History
-      let autoReplenishDatesAndData = getDatesAndData(finalRevenueForecast);
+      // --- Separate History Sheets ---
+
+      // Regular AutoReplenishHistory (only regular auto replenish)
+      let autoReplenishDatesAndData = Array.from(autoReplenish.entries()).map(([month, value]) => [month, value]);
+      autoReplenishDatesAndData.sort((a, b) => a[0].localeCompare(b[0]));
+      
       const sheet = context.workbook.worksheets.getItem("AutoReplenishHistory");
       
       //Get last column
@@ -465,43 +608,150 @@ export async function run() {
       await context.sync();
       
       // Load row 2 headers (row index 1)
-      if(autoReplenishHistoryUsedRange.columnCount <=1) return //There is no data.
-      
-      const headerRange = sheet.getRangeByIndexes(1, 1, 1, autoReplenishHistoryUsedRange.columnCount-1);
-      const datesRange = sheet.getRangeByIndexes(2,0,autoReplenishHistoryUsedRange.rowCount-2,1);
-      headerRange.load("values");
-      datesRange.load("values");
-      await context.sync();
-      
-      console.log("Dates in History:", datesRange.values);
-      const headers = headerRange.values[0] // Row 2
-      let currentMonthFormatted = formatDateWithDay(new Date());
-      let currentMonthPostion = headers.indexOf(currentMonthFormatted);
-      let datesInHistory = datesRange.values.map(x => x[0]);
-      
-      // Use normalized date comparison to find the correct starting row
-      let beginningDateIndex = findDateIndexInHistory(datesInHistory, autoReplenishDatesAndData[0][0]);
-      
-      console.log("Beginning Date Index:", beginningDateIndex);
-      console.log("Target Date:", autoReplenishDatesAndData[0][0]);
-      console.log("Current Month Position:", currentMonthPostion);
-      
-      await context.sync();
-      
-      //Check if it exists in the headers
-      if(currentMonthPostion !== -1){ //it Exists
-        //Add data to the same column
-        sheet.getRangeByIndexes(2+beginningDateIndex,currentMonthPostion+1,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
-        sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[0]])
-      }
-      else{
-        //Add data to a new column(The last column) starting at index 1 
+      if(autoReplenishHistoryUsedRange.columnCount > 1) {
+        const headerRange = sheet.getRangeByIndexes(1, 1, 1, autoReplenishHistoryUsedRange.columnCount-1);
+        const datesRange = sheet.getRangeByIndexes(2,0,autoReplenishHistoryUsedRange.rowCount-2,1);
+        headerRange.load("values");
+        datesRange.load("values");
+        await context.sync();
         
-        sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).numberFormat = [["@"]]; // force text
-        sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).values = [[currentMonthFormatted]];
-        sheet.getRangeByIndexes(2+beginningDateIndex,autoReplenishHistoryUsedRange.columnCount,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
-        sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[0]])
+        console.log("Dates in History:", datesRange.values);
+        const headersHistory = headerRange.values[0] // Row 2
+        let currentMonthFormatted = formatDateWithDay(new Date());
+        let currentMonthPostion = headersHistory.indexOf(currentMonthFormatted);
+        let datesInHistory = datesRange.values.map(x => x[0]);
+        
+        // Use normalized date comparison to find the correct starting row
+        let beginningDateIndex = findDateIndexInHistory(datesInHistory, autoReplenishDatesAndData[0][0]);
+        
+        console.log("Beginning Date Index:", beginningDateIndex);
+        console.log("Target Date:", autoReplenishDatesAndData[0][0]);
+        console.log("Current Month Position:", currentMonthPostion);
+        
+        await context.sync();
+        
+        //Check if it exists in the headers
+        if(currentMonthPostion !== -1){ //it Exists
+          //Add data to the same column
+          sheet.getRangeByIndexes(2+beginningDateIndex,currentMonthPostion+1,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
+          sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[0]])
+        }
+        else{
+          //Add data to a new column(The last column) starting at index 1 
+          sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).numberFormat = [["@"]]; // force text
+          sheet.getRangeByIndexes(1, autoReplenishHistoryUsedRange.columnCount, 1, 1).values = [[currentMonthFormatted]];
+          sheet.getRangeByIndexes(2+beginningDateIndex,autoReplenishHistoryUsedRange.columnCount,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[1]])
+          sheet.getRangeByIndexes(2+beginningDateIndex,0,autoReplenishDatesAndData.length,1).values = autoReplenishDatesAndData.map(x=>[x[0]])
+        }
       }
+
+// AED AutoReplenishHistory - CORRECT FORMAT
+if (aedAutoReplenish.size > 0) {
+  try {
+    let aedAutoReplenishDatesAndData = Array.from(aedAutoReplenish.entries()).map(([month, value]) => [month, value]);
+    aedAutoReplenishDatesAndData.sort((a, b) => a[0].localeCompare(b[0]));
+    
+    // Create or get the AED History sheet
+    let aedHistorySheet;
+    try {
+      aedHistorySheet = context.workbook.worksheets.getItem("AutoReplenishAEDHistory");
+    } catch (error) {
+      // Sheet doesn't exist, create it
+      aedHistorySheet = context.workbook.worksheets.add("AutoReplenishAEDHistory");
+    }
+    
+    // Get existing data structure
+    const aedHistoryUsedRange = aedHistorySheet.getUsedRange();
+    let currentDateFormatted = formatDateWithDay(new Date());
+    
+    if (!aedHistoryUsedRange) {
+      // Initialize new sheet structure
+      // Set up headers - "Report Dates" in A1, "Replenish Dates" in A2
+      aedHistorySheet.getRange("A1").values = [["Report Dates"]];
+      aedHistorySheet.getRange("A2").values = [["Replenish Dates"]];
+      
+      // Write the months in column A starting from A3
+      let allMonths = [...new Set([...aedAutoReplenishDatesAndData.map(x => x[0])])].sort();
+      let datesColumn = allMonths.map(month => [month]);
+      aedHistorySheet.getRange("A3:A" + (datesColumn.length + 2)).values = datesColumn;
+      
+      // Write current date as first column header in B2 (NOT B1)
+      aedHistorySheet.getRange("B2").numberFormat = [["@"]]; 
+      aedHistorySheet.getRange("B2").values = [[currentDateFormatted]];
+      
+      // Write the AED values in column B starting from B3
+      let valuesColumn = allMonths.map(month => {
+        return [aedAutoReplenish.get(month) || 0];
+      });
+      aedHistorySheet.getRange("B3:B" + (valuesColumn.length + 2)).values = valuesColumn;
+      
+    } else {
+      // Existing sheet with data - check if we need to add new column
+      aedHistoryUsedRange.load(["columnCount", "rowCount"]);
+      await context.sync();
+      
+      // Get the last column header from ROW 2 to check if it's the same date
+      const lastHeaderRange = aedHistorySheet.getRangeByIndexes(1, aedHistoryUsedRange.columnCount - 1, 1, 1);
+      lastHeaderRange.load("values");
+      await context.sync();
+      
+      const lastHeaderDate = lastHeaderRange.values[0][0];
+      
+      // Only add new column if it's a different day
+      if (lastHeaderDate !== currentDateFormatted) {
+        // Get existing dates column (starting from row 3)
+        const datesColumnRange = aedHistorySheet.getRange("A3:A" + aedHistoryUsedRange.rowCount);
+        datesColumnRange.load("values");
+        await context.sync();
+        
+        const existingDates = datesColumnRange.values.map(row => row[0]).filter(date => date);
+        
+        // Add new column for current date
+        let newColumnIndex = aedHistoryUsedRange.columnCount;
+        
+        // Set up new column header in ROW 2
+        aedHistorySheet.getRangeByIndexes(1, newColumnIndex, 1, 1).numberFormat = [["@"]];
+        aedHistorySheet.getRangeByIndexes(1, newColumnIndex, 1, 1).values = [[currentDateFormatted]];
+        
+        // Update values for existing dates starting from ROW 3
+        for (let i = 0; i < existingDates.length; i++) {
+          let month = existingDates[i];
+          let value = aedAutoReplenish.get(month) || 0;
+          aedHistorySheet.getRangeByIndexes(i + 2, newColumnIndex, 1, 1).values = [[value]];
+        }
+        
+        // Add any new months that don't exist in the dates column
+        let newMonths = aedAutoReplenishDatesAndData
+          .map(([month]) => month)
+          .filter(month => !existingDates.includes(month))
+          .sort();
+        
+        if (newMonths.length > 0) {
+          let startRow = existingDates.length + 2;
+          
+          // Add new months to column A starting from the next available row
+          aedHistorySheet.getRangeByIndexes(startRow, 0, newMonths.length, 1).values = newMonths.map(month => [month]);
+          
+          // Add values for new months in the new column
+          for (let i = 0; i < newMonths.length; i++) {
+            let month = newMonths[i];
+            let value = aedAutoReplenish.get(month) || 0;
+            aedHistorySheet.getRangeByIndexes(startRow + i, newColumnIndex, 1, 1).values = [[value]];
+          }
+        }
+        
+        console.log("New column added to AED AutoReplenishHistory for date:", currentDateFormatted);
+      } else {
+        console.log("No new column added - same date as last run:", currentDateFormatted);
+      }
+    }
+    
+    await context.sync();
+    console.log("AED AutoReplenishHistory updated successfully");
+  } catch (error) {
+    console.log("Error creating/updating AutoReplenishAEDHistory:", error);
+  }
+}
       
       await context.sync();
       return context.sync();
@@ -511,7 +761,9 @@ export async function run() {
   }
 }
 
-// ... (all the helper functions remain exactly the same as in your original code)
+// ... (keep all the helper functions the same as before)
+
+// ... (all helper functions remain exactly the same)
 // getDatesAndData, getBaseKitMap, generateForecast, applyDrugDataRevenue, applyAutoReplenishOnce,
 // excelSerialDateToJSDate, isPastMonth, formatDate, formatDateWithDay, formatMonth, addDays,
 // getCurrentMonthUTC, parseMonthString, findDateIndexInHistory, normalizeDateForComparison, parseMonth
@@ -601,6 +853,8 @@ function applyAutoReplenishOnce(forecastMap, autoData) {
   });
   return autoReplenish;
 }
+
+// ... (all helper functions remain the same)
 
 // ─── Helper Functions (Timezone Safe) ──────────────────────────────────────
 
