@@ -678,7 +678,7 @@ if (aedAutoReplenish.size > 0) {
       // Write current date as first column header in B2 (NOT B1)
       aedHistorySheet.getRange("B2").numberFormat = [["@"]]; 
       aedHistorySheet.getRange("B2").values = [[currentDateFormatted]];
-      
+      console.log("Hello Alvin");
       // Write the AED values in column B starting from B3
       let valuesColumn = allMonths.map(month => {
         return [aedAutoReplenish.get(month) || 0];
