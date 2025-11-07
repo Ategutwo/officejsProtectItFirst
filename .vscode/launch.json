@@ -2,13 +2,11 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Excel Desktop",
-      "type": "office-addin",
+      "name": "Debug Taskpane (Chromium)",
+      "type": "chrome",
       "request": "attach",
-      "url": "https://localhost:3000/taskpane.html?_host_Info=Excel$Win32$16.01$en-US$$$$0",
-      "webRoot": "${workspaceFolder}",
-      "preLaunchTask": "Debug: Excel Desktop",
-      "postDebugTask": "Stop Debug"
+      "port": 9222,
+      "webRoot": "${workspaceFolder}"
     }
   ]
 }

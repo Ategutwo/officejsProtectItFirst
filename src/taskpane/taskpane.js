@@ -83,7 +83,7 @@ export async function run() {
       }
       
       // Clear only up to column J to preserve discount in column L
-      wsRevenuePredictions.getRangeByIndexes(1, 0, 10000, 12).clear(Excel.ClearApplyTo.contents);
+      wsRevenuePredictions.getRangeByIndexes(1, 0, 10000, 15).clear(Excel.ClearApplyTo.contents);
       drugsExpirationPredictions
         .getRangeByIndexes(1, 0, 10000, 50)
         .clear(Excel.ClearApplyTo.contents);
@@ -257,6 +257,198 @@ export async function run() {
         row[12] === "X" ? emkDetails["EMK1-Mini"]["drugs"].push(row[0]) : "";
         row[13] === "X" ? emkDetails["EMK10-Mini"]["drugs"].push(row[0]) : "";
       });
+// ========== NEW TAKEOVER KIT CALCULATIONS ==========
+let takeoverRevenueMap = new Map();
+let takeoverDrugPredictions = [];
+ let drugsTakeoverExpirationPredictions = context.workbook.worksheets.getItem(
+        "Replenish Dates(TakoverKits)"
+      );
+       drugsTakeoverExpirationPredictions
+        .getRangeByIndexes(1, 0, 10000, 50)
+        .clear(Excel.ClearApplyTo.contents);
+        await context.sync();
+try {
+  // Get Takeover Drug Details
+  let wsTakeoverDrugDetails = context.workbook.worksheets.getItem("TakeOverDrugDetails");
+  let takeoverDrugsUsedRange = wsTakeoverDrugDetails.getUsedRange();
+  takeoverDrugsUsedRange.load(["rowIndex", "rowCount"]);
+  await context.sync();
+  
+  let takeoverDrugsLastRow = takeoverDrugsUsedRange.rowCount;
+  let takeoverDrugsDataRange = wsTakeoverDrugDetails.getRange(`A2:C${takeoverDrugsLastRow + 1}`);
+  takeoverDrugsDataRange.load("values");
+  await context.sync();
+  
+  console.log(`Takeover Drug Details rows: ${takeoverDrugsDataRange.values.length}`);
+  console.log("Takeover Drug Details sample:", takeoverDrugsDataRange.values.slice(0, 5));
+
+  // Create takeover drug details object grouped by kit
+  let takeoverDrugDetails = {};
+  let drugCount = 0;
+  
+  takeoverDrugsDataRange.values.forEach((row, index) => {
+    if (row[0] && row[0].toString().trim() !== "") {
+      const drugName = row[0].toString().trim();
+      const kit = row[1] ? row[1].toString().trim() : "";
+      const daysToFirstReplenishment = row[2] && !isNaN(row[2]) ? parseInt(row[2]) : 0;
+      
+      if (kit) {
+        if (!takeoverDrugDetails[kit]) {
+          takeoverDrugDetails[kit] = [];
+        }
+        
+        // Get drug price and shelf life from main drug details
+        const drugPrice = medsObj[drugName] ? medsObj[drugName].laCarte : 0;
+        const shelfLife = medsObj[drugName] ? medsObj[drugName].shelfLife : 0;
+        
+        if (drugPrice > 0 && daysToFirstReplenishment > 0) {
+          takeoverDrugDetails[kit].push({
+            drugName: drugName,
+            daysToFirstReplenishment: daysToFirstReplenishment,
+            price: drugPrice,
+            shelfLife: shelfLife
+          });
+          drugCount++;
+        } else {
+          console.log(`Skipping drug ${drugName} - price: ${drugPrice}, days: ${daysToFirstReplenishment}`);
+        }
+      }
+    }
+  });
+
+  console.log(`Loaded ${drugCount} valid takeover drugs across kits:`, Object.keys(takeoverDrugDetails));
+  Object.keys(takeoverDrugDetails).forEach(kit => {
+    console.log(`  ${kit}: ${takeoverDrugDetails[kit].length} drugs`);
+  });
+
+  // Get New Takeover Kit Data
+  let wsNewTakeoverKitData = context.workbook.worksheets.getItem("New Takover Kit Data");
+  let takeoverKitsUsedRange = wsNewTakeoverKitData.getUsedRange();
+  takeoverKitsUsedRange.load(["rowIndex", "rowCount", "columnCount"]);
+  await context.sync();
+  
+  let takeoverKitsLastRow = takeoverKitsUsedRange.rowCount;
+  let takeoverKitsDataRange = wsNewTakeoverKitData.getRange(`A2:G${takeoverKitsLastRow + 1}`);
+  takeoverKitsDataRange.load("values");
+  await context.sync();
+  
+  console.log(`Takeover Kit Data rows: ${takeoverKitsDataRange.values.length}`);
+  console.log("Takeover Kit Data sample:", takeoverKitsDataRange.values.slice(0, 3));
+
+  // Process takeover kit data
+  
+  const kitColumns = {
+    1: "EMK1",
+    2: "EMK5", 
+    3: "EMK10",
+    4: "EMK15",
+    5: "EMK1-Mini",
+    6: "EMK10-Mini"
+  };
+
+  let totalProcessed = 0;
+  let monthlyBreakdown = {};
+
+  takeoverKitsDataRange.values.forEach((row, rowIndex) => {
+    const takeoverDate = excelSerialDateToJSDate(row[0]);
+    const takeoverMonthKey = formatDate(takeoverDate);
+    
+    console.log(`\nProcessing month: ${takeoverMonthKey}`);
+    monthlyBreakdown[takeoverMonthKey] = { kits: 0, drugs: 0, revenue: 0 };
+    
+    // Process each kit type in this month
+    for (let i = 1; i <= 6; i++) {
+      const kitName = kitColumns[i];
+      const numberOfTakeovers = row[i] && !isNaN(row[i]) ? parseInt(row[i]) : 0;
+      
+      console.log(`  ${kitName}: ${numberOfTakeovers} takeovers`);
+      
+      if (numberOfTakeovers > 0 && takeoverDrugDetails[kitName]) {
+        monthlyBreakdown[takeoverMonthKey].kits += numberOfTakeovers;
+        
+        // For each drug in this kit, calculate replenishments
+        takeoverDrugDetails[kitName].forEach(drug => {
+          if (drug.price && !isNaN(drug.price) && drug.daysToFirstReplenishment > 0 && drug.shelfLife && !isNaN(drug.shelfLife)) {
+            const drugRevenue = drug.price * numberOfTakeovers;
+            totalProcessed++;
+            monthlyBreakdown[takeoverMonthKey].drugs++;
+            monthlyBreakdown[takeoverMonthKey].revenue += drugRevenue;
+            
+            // Calculate first replenishment date
+            const firstReplenishDate = new Date(takeoverDate);
+            firstReplenishDate.setUTCDate(firstReplenishDate.getUTCDate() + drug.daysToFirstReplenishment);
+            const firstReplenishMonthKey = formatDate(firstReplenishDate);
+            
+            console.log(`    ${drug.drugName}: ${numberOfTakeovers} × $${drug.price} = $${drugRevenue}, first replenish: ${firstReplenishMonthKey}`);
+            
+            // Generate ALL replenishment dates
+            const replenishmentDates = [];
+            
+            for (let i = 0; i < 10; i++) {
+              const expireDate = new Date(firstReplenishDate);
+              expireDate.setUTCDate(expireDate.getUTCDate() + drug.shelfLife * i);
+              
+              const expireYear = expireDate.getUTCFullYear();
+              const expireMonth = String(expireDate.getUTCMonth() + 1).padStart(2, "0");
+              const monthKey = `${expireYear}-${expireMonth}`;
+              
+              replenishmentDates.push(monthKey);
+              
+              // Add revenue to EACH replenishment month
+              const currentRevenue = takeoverRevenueMap.get(monthKey) || 0;
+              takeoverRevenueMap.set(monthKey, currentRevenue + drugRevenue);
+            }
+            
+            // Add to drug predictions for tracking
+            takeoverDrugPredictions.push([
+              takeoverMonthKey,
+              kitName + " (Takeover)",
+              drug.drugName,
+              numberOfTakeovers,
+              drugRevenue,
+              drug.shelfLife,
+              drug.daysToFirstReplenishment,
+              ...replenishmentDates
+            ]);
+          }
+        });
+      }
+    }
+  });
+
+  console.log(`\n=== TAKEOVER PROCESSING SUMMARY ===`);
+  console.log(`Total drug entries processed: ${totalProcessed}`);
+  console.log(`Monthly breakdown:`, monthlyBreakdown);
+  console.log(`Takeover Revenue Map entries: ${takeoverRevenueMap.size}`);
+  console.log("Takeover Revenue Map sample:", Array.from(takeoverRevenueMap.entries()).slice(0, 10));
+  console.log(`Takeover Drug Predictions count: ${takeoverDrugPredictions.length}`);
+
+  // Add takeover drug predictions to the main drug predictions sheet
+  if (takeoverDrugPredictions.length > 0) {
+    const currentPredictionsRange = drugsTakeoverExpirationPredictions.getUsedRange();
+    let currentRowCount = 1;
+    if (currentPredictionsRange) {
+      currentPredictionsRange.load("rowCount");
+      await context.sync();
+      currentRowCount = currentPredictionsRange.rowCount;
+    }
+    
+    console.log(`Adding ${takeoverDrugPredictions.length} takeover predictions starting at row ${currentRowCount}`);
+    
+    drugsTakeoverExpirationPredictions.getRangeByIndexes(
+      currentRowCount,
+      0,
+      takeoverDrugPredictions.length,
+      takeoverDrugPredictions[0].length
+    ).values = takeoverDrugPredictions;
+  } else {
+    console.log("No takeover predictions to add!");
+  }
+
+} catch (error) {
+  console.log("Error processing takeover kit data:", error);
+}
+// ========== END TAKEOVER KIT CALCULATIONS ==========
       
       //Creating calculation for all drugs per month with monthly price increases
       let newKitDrugPredictions = [];
@@ -490,6 +682,7 @@ export async function run() {
         ...aedAutoReplenish.keys(),
         ...baseMap.keys(),
         ...forecastMap.keys(),
+        ...takeoverRevenueMap.keys(), // Add takeover months
       ]);
 
       // 2. Generate final forecast array with separate AED Auto Replenish column
@@ -547,6 +740,7 @@ export async function run() {
         const auto = autoReplenish.get(month) || 0;
         const aedAuto = aedAutoReplenish.get(month) || 0;
         const drugData = drugDataMap.get(month) || 0;
+        const takeoverRevenue = takeoverRevenueMap.get(month) || 0; // New takeover revenue
         
         // Calculate Non-Auto Replenishment (25% of Auto Replenish, only for future months)
         const nonAutoReplenishment = (month > currentMonthKey) ? auto * nonAutoPercentage : 0;
@@ -554,8 +748,8 @@ export async function run() {
         // Calculate AED Sales (only for future months)
         const aedSales = (month > currentMonthKey) ? aedSalesValue : 0;
         
-        // Update total revenue to include all components
-        const totalRevenue = newkit + auto + aedAuto + drugData + nonAutoReplenishment + aedSales;
+        // Update total revenue to include all components including takeover revenue
+        const totalRevenue = newkit + auto + aedAuto + drugData + nonAutoReplenishment + aedSales + takeoverRevenue;
 
         finalRevenueForecast.push([
           month, 
@@ -565,11 +759,12 @@ export async function run() {
           drugData,
           nonAutoReplenishment,
           aedSales,
-          aedAuto  // Column H: AED Auto Replenish
+          aedAuto,  // Column H: AED Auto Replenish
+          takeoverRevenue  // Column I: New Takeover Kit Revenue
         ]);
       }
 
-      // Update the range to include column H
+      // Update the range to include column I (takeover revenue)
       wsRevenuePredictions.getRangeByIndexes(
         1,
         0,
@@ -577,7 +772,7 @@ export async function run() {
         finalRevenueForecast[0].length
       ).values = finalRevenueForecast;
       
-      // Add headers
+      // Add headers including takeover revenue
       const headers = [
         "Month", 
         "Total Revenue", 
@@ -586,7 +781,8 @@ export async function run() {
         "Drug Data Revenue",
         "Non-Auto Replenishment",
         "AED Sales",
-        "AED Auto Replenish"
+        "AED Auto Replenish",
+        "New Takeover Kit Revenue"  // New column for takeover revenue
       ];
       wsRevenuePredictions.getRangeByIndexes(0, 0, 1, headers.length).values = [headers];
       
@@ -752,7 +948,112 @@ if (aedAutoReplenish.size > 0) {
     console.log("Error creating/updating AutoReplenishAEDHistory:", error);
   }
 }
-      
+  // Add this code right before the final await context.sync() and return context.sync() in your run function
+// Place it after you've populated the wsRevenuePredictions sheet
+
+// ========== YEARLY REVENUE SUMMARY ==========
+try {
+  let yearlyRevenueSheet;
+  try {
+    yearlyRevenueSheet = context.workbook.worksheets.getItem("Yearly Revenue");
+    // Clear existing data
+    yearlyRevenueSheet.getUsedRange().clear(Excel.ClearApplyTo.contents);
+  } catch (error) {
+    // Sheet doesn't exist, create it
+    yearlyRevenueSheet = context.workbook.worksheets.add("Yearly Revenue");
+  }
+
+  // Get the revenue predictions data (skip header row)
+  const revenueDataRange = wsRevenuePredictions.getUsedRange();
+  revenueDataRange.load("values");
+  await context.sync();
+  
+  const revenueData = revenueDataRange.values;
+  
+  // Skip header row (index 0) and process data rows
+  const yearlySummary = new Map();
+  
+  for (let i = 1; i < revenueData.length; i++) {
+    const row = revenueData[i];
+    if (!row || row.length < 9) continue;
+    
+    const [month, totalRevenue, newKit, autoReplenish, drugData, nonAuto, aedSales, aedAuto, takeoverRevenue] = row;
+    
+    // Extract year from month (format: "YYYY-MM")
+    const year = month.split('-')[0];
+    
+    if (!yearlySummary.has(year)) {
+      yearlySummary.set(year, {
+        total: 0,
+        newKit: 0,
+        autoReplenish: 0,
+        drugData: 0,
+        nonAuto: 0,
+        aedSales: 0,
+        aedAuto: 0,
+        takeover: 0
+      });
+    }
+    
+    const yearData = yearlySummary.get(year);
+    yearData.total += parseFloat(totalRevenue) || 0;
+    yearData.newKit += parseFloat(newKit) || 0;
+    yearData.autoReplenish += parseFloat(autoReplenish) || 0;
+    yearData.drugData += parseFloat(drugData) || 0;
+    yearData.nonAuto += parseFloat(nonAuto) || 0;
+    yearData.aedSales += parseFloat(aedSales) || 0;
+    yearData.aedAuto += parseFloat(aedAuto) || 0;
+    yearData.takeover += parseFloat(takeoverRevenue) || 0;
+  }
+  
+  // Convert map to array and sort by year
+  const yearlyArray = Array.from(yearlySummary.entries())
+    .map(([year, data]) => [year, data.total, data.newKit, data.autoReplenish, data.drugData, data.nonAuto, data.aedSales, data.aedAuto, data.takeover])
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  
+  // Add headers
+  const headers = [
+    "Year", 
+    "Total Revenue", 
+    "New Kit Revenue", 
+    "Auto Replenish", 
+    "Drug Data Revenue",
+    "Non-Auto Replenishment",
+    "AED Sales",
+    "AED Auto Replenish",
+    "New Takeover Kit Revenue"
+  ];
+  
+  // Prepare data for Excel (headers + sorted yearly data)
+  const sheetData = [headers, ...yearlyArray];
+  
+  // Write to sheet
+  yearlyRevenueSheet.getRangeByIndexes(0, 0, sheetData.length, headers.length).values = sheetData;
+  
+  // Format the header row
+  const headerRange = yearlyRevenueSheet.getRangeByIndexes(0, 0, 1, headers.length);
+  headerRange.format.fill.color = "#4472C4";
+  headerRange.format.font.color = "white";
+  headerRange.format.font.bold = true;
+  
+  // Format numbers as currency
+  if (sheetData.length > 1) {
+    const dataRange = yearlyRevenueSheet.getRangeByIndexes(1, 1, sheetData.length - 1, headers.length - 1);
+    dataRange.numberFormat = [["$#,##0.00"]];
+  }
+  
+  // Auto-fit columns for better readability
+  yearlyRevenueSheet.getUsedRange().format.autofitColumns();
+  
+  console.log("Yearly Revenue summary created successfully");
+  console.table(yearlyArray);
+  
+} catch (error) {
+  console.log("Error creating Yearly Revenue summary:", error);
+}
+// ========== END YEARLY REVENUE SUMMARY ==========      
+
+
       await context.sync();
       return context.sync();
     });
@@ -761,12 +1062,7 @@ if (aedAutoReplenish.size > 0) {
   }
 }
 
-// ... (keep all the helper functions the same as before)
-
 // ... (all helper functions remain exactly the same)
-// getDatesAndData, getBaseKitMap, generateForecast, applyDrugDataRevenue, applyAutoReplenishOnce,
-// excelSerialDateToJSDate, isPastMonth, formatDate, formatDateWithDay, formatMonth, addDays,
-// getCurrentMonthUTC, parseMonthString, findDateIndexInHistory, normalizeDateForComparison, parseMonth
 
 function getDatesAndData(foreCastData=[[]]){
   return foreCastData.map(
