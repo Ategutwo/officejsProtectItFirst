@@ -14,6 +14,13 @@ Office.onReady((info) => {
 export async function run() {
   try {
     await Excel.run(async (context) => {
+      // List of drugs that should be free for auto-replenishments
+      const FREE_DRUGS = new Set([
+        "Aspirin (3 / 2-packs)",
+        "Syringe 3ml Luer-Lok Tip 25G x 1", 
+        "Syringe BD 1ml TB - 25G X 5/8"
+      ]);
+      
       let ws = context.workbook.worksheets.getItem("DrugDetails");
       let packageDetails = context.workbook.worksheets.getItem("packageDistribution");
       let packageDetailsRange = packageDetails.getRange("A2:D7");
@@ -260,13 +267,14 @@ export async function run() {
 // ========== NEW TAKEOVER KIT CALCULATIONS ==========
 let takeoverRevenueMap = new Map();
 let takeoverDrugPredictions = [];
- let drugsTakeoverExpirationPredictions = context.workbook.worksheets.getItem(
-        "Replenish Dates(TakoverKits)"
-      );
-       drugsTakeoverExpirationPredictions
-        .getRangeByIndexes(1, 0, 10000, 50)
-        .clear(Excel.ClearApplyTo.contents);
-        await context.sync();
+let drugsTakeoverExpirationPredictions = context.workbook.worksheets.getItem(
+  "Replenish Dates(TakoverKits)"
+);
+drugsTakeoverExpirationPredictions
+  .getRangeByIndexes(1, 0, 10000, 50)
+  .clear(Excel.ClearApplyTo.contents);
+await context.sync();
+
 try {
   // Get Takeover Drug Details
   let wsTakeoverDrugDetails = context.workbook.worksheets.getItem("TakeOverDrugDetails");
@@ -369,20 +377,18 @@ try {
         // For each drug in this kit, calculate replenishments
         takeoverDrugDetails[kitName].forEach(drug => {
           if (drug.price && !isNaN(drug.price) && drug.daysToFirstReplenishment > 0 && drug.shelfLife && !isNaN(drug.shelfLife)) {
-            const drugRevenue = drug.price * numberOfTakeovers;
-            totalProcessed++;
-            monthlyBreakdown[takeoverMonthKey].drugs++;
-            monthlyBreakdown[takeoverMonthKey].revenue += drugRevenue;
+            
+            // Check if this drug is in the FREE_DRUGS list
+            const isFreeDrug = FREE_DRUGS.has(drug.drugName.trim());
             
             // Calculate first replenishment date
             const firstReplenishDate = new Date(takeoverDate);
             firstReplenishDate.setUTCDate(firstReplenishDate.getUTCDate() + drug.daysToFirstReplenishment);
             const firstReplenishMonthKey = formatDate(firstReplenishDate);
             
-            console.log(`    ${drug.drugName}: ${numberOfTakeovers} × $${drug.price} = $${drugRevenue}, first replenish: ${firstReplenishMonthKey}`);
-            
             // Generate ALL replenishment dates
             const replenishmentDates = [];
+            const replenishmentRevenues = [];
             
             for (let i = 0; i < 10; i++) {
               const expireDate = new Date(firstReplenishDate);
@@ -394,10 +400,28 @@ try {
               
               replenishmentDates.push(monthKey);
               
+              // Calculate revenue based on whether drug is free and if it's first replenishment
+              let drugRevenue = 0;
+              if (isFreeDrug) {
+                // For free drugs: FIRST replenishment is charged, SUBSEQUENT ones are FREE
+                drugRevenue = (i === 0) ? (drug.price * numberOfTakeovers) : 0;
+              } else {
+                // For regular drugs: ALL replenishments are charged
+                drugRevenue = drug.price * numberOfTakeovers;
+              }
+              
+              replenishmentRevenues.push(drugRevenue);
+              
               // Add revenue to EACH replenishment month
               const currentRevenue = takeoverRevenueMap.get(monthKey) || 0;
               takeoverRevenueMap.set(monthKey, currentRevenue + drugRevenue);
+              // console.log("ALvin starts Here")
+              // console.log(`${drug.drugName}: ${numberOfTakeovers} × $${drug.price} = $${drugRevenue}, replenish ${i+1}: ${monthKey} ${isFreeDrug ? (i === 0 ? '(FREE_DRUG - FIRST REPLENISHMENT CHARGED)' : '(FREE_DRUG - SUBSEQUENT FREE)') : '(REGULAR DRUG - CHARGED)'}`);
             }
+            
+            totalProcessed++;
+            monthlyBreakdown[takeoverMonthKey].drugs++;
+            monthlyBreakdown[takeoverMonthKey].revenue += replenishmentRevenues[0]; // Count first replenishment revenue
             
             // Add to drug predictions for tracking
             takeoverDrugPredictions.push([
@@ -405,7 +429,7 @@ try {
               kitName + " (Takeover)",
               drug.drugName,
               numberOfTakeovers,
-              drugRevenue,
+              replenishmentRevenues[0], // First replenishment revenue
               drug.shelfLife,
               drug.daysToFirstReplenishment,
               ...replenishmentDates
@@ -460,16 +484,19 @@ try {
           emkDetails[kit].drugs.forEach((drug) => {
             if (medsObj[drug].shelfLife == "" || medsObj[drug].shelfLife == "N/A") return;
             
-            // Apply monthly increase to drug price
+            // Check if this drug should be free for replenishment
+            const isFreeDrug = FREE_DRUGS.has(drug.trim());
+            
+            // Apply monthly increase to drug price, but set to 0 if free
             const drugDate = parseMonthString(month);
-            const adjustedDrugPrice = getAdjustedPrice(medsObj[drug].basePrice, drugDate, monthlyIncreaseMap);
+            const adjustedDrugPrice = isFreeDrug ? 0 : getAdjustedPrice(medsObj[drug].basePrice, drugDate, monthlyIncreaseMap);
             
             newKitDrugPredictions.push([
               month,
               kit,
               drug,
               kitAmount,
-              adjustedDrugPrice * kitAmount, // Use adjusted price
+              adjustedDrugPrice * kitAmount, // Use adjusted price (0 if free)
               medsObj[drug].shelfLife,
             ]);
           });
@@ -546,8 +573,9 @@ try {
         const config = medsObj[medication];
         const baseDate = excelSerialDateToJSDate(expirationStr);
 
-        // Apply monthly increase to the base price
-        const adjustedPrice = baseDate ? getAdjustedPrice(price, baseDate, monthlyIncreaseMap) : price;
+        // Check if this medication should be free
+        const isFreeDrug = FREE_DRUGS.has(medication.trim());
+        const adjustedPrice = isFreeDrug ? 0 : (baseDate ? getAdjustedPrice(price, baseDate, monthlyIncreaseMap) : price);
 
         // Always include original (keep existing records even if no shelf life)
         outputAutoReplenishAndForecast.push([
@@ -570,7 +598,7 @@ try {
 
         for (let i = 1; i <= 20; i++) {
           const futureDate = addDays(baseDate, shelfLife * i);
-          const futureAdjustedPrice = getAdjustedPrice(price, futureDate, monthlyIncreaseMap);
+          const futureAdjustedPrice = isFreeDrug ? 0 : getAdjustedPrice(price, futureDate, monthlyIncreaseMap);
           
           outputAutoReplenishAndForecast.push([
             group,
@@ -628,8 +656,9 @@ try {
           ? excelSerialDateToJSDate(expirationStr) 
           : null;
 
-        // Apply monthly increase to the base price
-        const adjustedPrice = baseDate ? getAdjustedPrice(price, baseDate, monthlyIncreaseMap) : price;
+        // Check if this AED item should be free
+        const isFreeDrug = FREE_DRUGS.has(cleanAEDItem);
+        const adjustedPrice = isFreeDrug ? 0 : (baseDate ? getAdjustedPrice(price, baseDate, monthlyIncreaseMap) : price);
 
         // Always include original (keep existing records even if no shelf life or expiration)
         outputAEDAutoReplenishAndForecast.push([
@@ -652,7 +681,7 @@ try {
 
         for (let i = 1; i <= 20; i++) {
           const futureDate = addDays(baseDate, shelfLife * i);
-          const futureAdjustedPrice = getAdjustedPrice(price, futureDate, monthlyIncreaseMap);
+          const futureAdjustedPrice = isFreeDrug ? 0 : getAdjustedPrice(price, futureDate, monthlyIncreaseMap);
           
           outputAEDAutoReplenishAndForecast.push([
             group,
